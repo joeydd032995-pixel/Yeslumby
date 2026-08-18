@@ -33,6 +33,14 @@ export interface BenchmarkDeps {
   gateway: ModelGateway;
   clock: Clock;
   ids: IdGenerator;
+  /**
+   * Billing attribution for benchmark spend.
+   *
+   * Without this, benchmark runs record usage with a null org and fall out of
+   * every billing rollup — and a full suite across several genomes is often the
+   * most expensive thing an account does.
+   */
+  attribution?: { orgId?: string | null; workspaceId?: string | null };
 }
 
 export interface BenchmarkTarget {
@@ -161,6 +169,8 @@ async function runTask(
     },
     iteration: 0,
     attribution: {
+      orgId: deps.attribution?.orgId ?? null,
+      workspaceId: deps.attribution?.workspaceId ?? null,
       ecosystemId: target.ecosystemId,
       runId: run.id,
       stage: "benchmark",
