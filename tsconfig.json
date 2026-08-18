@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@meta/shared": ["packages/shared/src/index.ts"],
+      "@meta/shared/*": ["packages/shared/src/*"],
+      "@meta/genome": ["packages/genome/src/index.ts"],
+      "@meta/genome/*": ["packages/genome/src/*"],
+      "@meta/db": ["packages/db/src/index.ts"],
+      "@meta/db/*": ["packages/db/src/*"],
+      "@meta/gateway": ["packages/gateway/src/index.ts"],
+      "@meta/gateway/*": ["packages/gateway/src/*"],
+      "@meta/runtime": ["packages/runtime/src/index.ts"],
+      "@meta/runtime/*": ["packages/runtime/src/*"],
+      "@meta/memory": ["packages/memory/src/index.ts"],
+      "@meta/memory/*": ["packages/memory/src/*"],
+      "@meta/bench": ["packages/bench/src/index.ts"],
+      "@meta/bench/*": ["packages/bench/src/*"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "**/dist", "**/.next"]
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Local Postgres cluster created by scripts/dev-db.sh
+.pgdata/
+
+.env
+.env.local
+.DS_Store
+coverage/
