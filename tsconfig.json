@@ -36,6 +36,8 @@
       "@meta/runtime/*": ["packages/runtime/src/*"],
       "@meta/memory": ["packages/memory/src/index.ts"],
       "@meta/memory/*": ["packages/memory/src/*"],
+      "@meta/evolution": ["packages/evolution/src/index.ts"],
+      "@meta/evolution/*": ["packages/evolution/src/*"],
       "@meta/bench": ["packages/bench/src/index.ts"],
       "@meta/bench/*": ["packages/bench/src/*"]
     }

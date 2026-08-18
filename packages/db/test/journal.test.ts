@@ -33,13 +33,19 @@ async function seedRun(label: string) {
   return { ...t, version, run };
 }
 
+
+/** claimStep with a default owner token; concurrency tests override it. */
+const claim = (
+  args: Omit<Parameters<typeof runs.claimStep>[1], "ownerToken"> & { ownerToken?: string },
+) => runs.claimStep(sql, { ownerToken: "worker-1", ...args });
+
 describe("step journal", () => {
   it("claims a step once, then replays it", async () => {
     const { run } = await seedRun("j1");
     const key = `${run.id}:0:PROPOSALS:agent-a`;
     const inputHash = contentHash({ objective: "test objective" });
 
-    const first = await runs.claimStep(sql, {
+    const first = await claim({
       runId: run.id,
       stepKey: key,
       iteration: 0,
@@ -51,7 +57,7 @@ describe("step journal", () => {
 
     await runs.completeStep(sql, run.id, key, { answer: 42 }, 120);
 
-    const second = await runs.claimStep(sql, {
+    const second = await claim({
       runId: run.id,
       stepKey: key,
       iteration: 0,
@@ -68,7 +74,7 @@ describe("step journal", () => {
     const { run } = await seedRun("j2");
     const key = `${run.id}:0:SYNTHESIS:stage`;
 
-    await runs.claimStep(sql, {
+    await claim({
       runId: run.id,
       stepKey: key,
       iteration: 0,
@@ -80,7 +86,7 @@ describe("step journal", () => {
 
     // A new proposal upstream changes this step's inputs; the recorded output
     // no longer describes it, so replaying would be wrong.
-    const reclaimed = await runs.claimStep(sql, {
+    const reclaimed = await claim({
       runId: run.id,
       stepKey: key,
       iteration: 0,
@@ -97,7 +103,7 @@ describe("step journal", () => {
     const key = `${run.id}:0:WATCHER:stage`;
     const inputHash = contentHash({ x: 1 });
 
-    await runs.claimStep(sql, {
+    await claim({
       runId: run.id,
       stepKey: key,
       iteration: 0,
@@ -107,7 +113,7 @@ describe("step journal", () => {
     });
     await runs.failStep(sql, run.id, key, { message: "provider timeout" });
 
-    const retry = await runs.claimStep(sql, {
+    const retry = await claim({
       runId: run.id,
       stepKey: key,
       iteration: 0,
@@ -120,32 +126,100 @@ describe("step journal", () => {
     expect(retry.step.error).toBeNull();
   });
 
-  it("gives exactly one winner when the same step is claimed concurrently", async () => {
+  it("gives exactly one worker the claim when several race for a fresh step", async () => {
     const { run } = await seedRun("j4");
     const key = `${run.id}:0:PROPOSALS:contended`;
     const inputHash = contentHash({ contended: true });
 
     const claims = await Promise.all(
-      Array.from({ length: 6 }, () =>
-        runs.claimStep(sql, {
+      Array.from({ length: 6 }, (_, i) =>
+        claim({
           runId: run.id,
           stepKey: key,
           iteration: 0,
           stage: "PROPOSALS",
           unitId: "contended",
           inputHash,
+          ownerToken: `worker-${i}`,
         }),
       ),
     );
 
-    // All six report "claimed" (none can replay a step that never completed),
-    // but the unique constraint guarantees a single row backs them.
+    // The guarantee that matters: exactly one worker executes. Returning
+    // "claimed" to all six would have them each make the same model call and
+    // race to overwrite the journal.
+    expect(claims.filter((c) => c.kind === "claimed")).toHaveLength(1);
+    expect(claims.filter((c) => c.kind === "in_progress")).toHaveLength(5);
+
     const rows = await sql<{ count: string }[]>`
       SELECT count(*)::text AS count FROM run_steps
       WHERE run_id = ${run.id} AND step_key = ${key}
     `;
     expect(rows[0]?.count).toBe("1");
-    expect(claims).toHaveLength(6);
+  });
+
+  it("lets a second worker take over once the lease has expired", async () => {
+    const { run } = await seedRun("j4b");
+    const key = `${run.id}:0:PROPOSALS:stalled`;
+    const inputHash = contentHash({ stalled: true });
+
+    const first = await claim({
+      runId: run.id,
+      stepKey: key,
+      iteration: 0,
+      stage: "PROPOSALS",
+      unitId: "stalled",
+      inputHash,
+      ownerToken: "worker-dead",
+      leaseSeconds: 1,
+    });
+    expect(first.kind).toBe("claimed");
+
+    // Simulate the holder dying: expire its lease without completing.
+    await sql`
+      UPDATE run_steps SET lease_expires_at = now() - interval '1 second'
+      WHERE run_id = ${run.id} AND step_key = ${key}
+    `;
+
+    const takeover = await claim({
+      runId: run.id,
+      stepKey: key,
+      iteration: 0,
+      stage: "PROPOSALS",
+      unitId: "stalled",
+      inputHash,
+      ownerToken: "worker-live",
+    });
+
+    // A dead worker must not strand the run forever.
+    expect(takeover.kind).toBe("claimed");
+    expect(takeover.step.owner_token).toBe("worker-live");
+  });
+
+  it("refuses a result from a worker whose lease was taken over", async () => {
+    const { run } = await seedRun("j4c");
+    const key = `${run.id}:0:PROPOSALS:usurped`;
+    const inputHash = contentHash({ usurped: true });
+
+    await claim({
+      runId: run.id,
+      stepKey: key,
+      iteration: 0,
+      stage: "PROPOSALS",
+      unitId: "usurped",
+      inputHash,
+      ownerToken: "worker-old",
+    });
+    await sql`
+      UPDATE run_steps SET owner_token = 'worker-new'
+      WHERE run_id = ${run.id} AND step_key = ${key}
+    `;
+
+    const stored = await runs.completeStep(sql, run.id, key, { late: true }, 10, "worker-old");
+    expect(stored).toBe(false);
+
+    const step = await runs.getStep(sql, run.id, key);
+    expect(step?.output).toBeNull();
   });
 
   it("keeps steps of different iterations independent", async () => {
@@ -153,7 +227,7 @@ describe("step journal", () => {
     const inputHash = contentHash({ same: "inputs" });
 
     for (const iteration of [0, 1]) {
-      await runs.claimStep(sql, {
+      await claim({
         runId: run.id,
         stepKey: `${run.id}:${iteration}:PROPOSALS:agent-a`,
         iteration,
@@ -229,6 +303,7 @@ describe("provenance", () => {
     });
 
     const trace = await runs.traceProvenance(sql, synthesis.id);
+    expect(new Set(trace.map((a) => a.id)).size).toBe(trace.length);
     expect(trace.map((a) => a.id)).toEqual([synthesis.id, challenge.id, proposal.id]);
     expect(trace.map((a) => a.depth)).toEqual([0, 1, 2]);
   });

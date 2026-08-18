@@ -288,7 +288,15 @@ export function applyPatches(
   // Re-validate. A patch set that produces an incoherent organization — a
   // dangling edge, a lost synthesizer, an agent count over the cap — fails here
   // rather than at run time.
-  return { genome: parseGenome(draft), applied: validated };
+  //
+  // Warnings are fatal for an unattended Watcher mutation but not for a human
+  // one. A person may knowingly accept a genome that trips a warning — they can
+  // see it and are choosing it. An automated mutation that quietly collapses
+  // cognitive diversity, or points the Watcher at the Synthesizer's own model
+  // family, degrades the very signal the evolutionary loop steers by, and
+  // nobody is watching at the moment it happens.
+  const strict = options.actor === "WATCHER";
+  return { genome: parseGenome(draft, { strict }), applied: validated };
 }
 
 function findAgent(genome: ArchitectureGenome, id: string, type: MutationType) {

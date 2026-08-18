@@ -129,8 +129,35 @@ describe("edge-driven challenges", () => {
   });
 });
 
+/**
+ * Replace generated identifiers with positional placeholders.
+ *
+ * Two runs cannot share artifact ids — they are primary keys, so identical ids
+ * across concurrently existing runs are impossible by construction. Since
+ * synthesis cites the artifacts it actually rests on, those ids appear in its
+ * content. Reproducibility is therefore over *reasoning*, with identity
+ * normalized out: the same relation as git, where two identical trees hash
+ * alike while the commits pointing at them differ.
+ */
+function normalizeIds(value: unknown): unknown {
+  const seen = new Map<string, string>();
+  const walk = (node: unknown): unknown => {
+    if (typeof node === "string") {
+      if (!/^(art|run|gv|eco|mem)_/.test(node)) return node;
+      if (!seen.has(node)) seen.set(node, `<id-${seen.size}>`);
+      return seen.get(node);
+    }
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, walk(v)]));
+    }
+    return node;
+  };
+  return walk(value);
+}
+
 describe("determinism", () => {
-  it("produces identical artifacts for the same genome, seed, and objective", async () => {
+  it("produces identical reasoning for the same genome, seed, and objective", async () => {
     const seed = "fixed-seed-for-determinism";
     const objective = "Is the observed correlation causal?";
 
@@ -140,9 +167,9 @@ describe("determinism", () => {
     const ra = await executeRound(a.ctx);
     const rb = await executeRound(b.ctx);
 
-    // Content-address the whole round. Ids differ between the two runs, so the
-    // comparison is over content, which is what reproducibility means here.
-    expect(contentHash(ra.synthesis)).toBe(contentHash(rb.synthesis));
+    expect(contentHash(normalizeIds(ra.synthesis))).toBe(
+      contentHash(normalizeIds(rb.synthesis)),
+    );
     expect(contentHash(ra.proposals.map((p) => p.proposal))).toBe(
       contentHash(rb.proposals.map((p) => p.proposal)),
     );
@@ -158,7 +185,34 @@ describe("determinism", () => {
 
     const ra = await executeRound(a.ctx);
     const rb = await executeRound(b.ctx);
-    expect(contentHash(ra.synthesis)).not.toBe(contentHash(rb.synthesis));
+    expect(contentHash(normalizeIds(ra.synthesis))).not.toBe(
+      contentHash(normalizeIds(rb.synthesis)),
+    );
+  });
+
+  it("cites only artifacts that exist in this run", async () => {
+    const h = await makeHarness(sql, { seed: "provenance-seed" });
+    const result = await executeRound(h.ctx);
+
+    const real = new Set([
+      ...result.proposals.map((p) => p.artifactId),
+      ...result.challenges.map((c) => c.artifactId),
+      ...result.falsifications.map((f) => f.artifactId),
+    ]);
+
+    const cited = [
+      ...result.synthesis.highConfidence.flatMap((c) => c.sources),
+      ...result.synthesis.workingHypotheses.flatMap((c) => c.sources),
+      ...result.synthesis.contested.flatMap((c) => c.positions.flatMap((p) => p.sources)),
+    ];
+
+    // "Every claim is traceable" is only true if the citations resolve. The
+    // schema restricts them to an enum of this run's artifacts, so a fabricated
+    // reference cannot be generated in the first place.
+    expect(cited.length).toBeGreaterThan(0);
+    for (const source of cited) {
+      expect(real.has(source.artifactId), `dangling citation ${source.artifactId}`).toBe(true);
+    }
   });
 });
 
@@ -429,8 +483,13 @@ describe("stop criteria", () => {
     await expect(executeRound(h.ctx)).rejects.toThrow(StopCriterionError);
   });
 
+  /** The default genome declares maxRounds: 1, which would stop the loop before
+   * any other criterion could apply. These cases need room to iterate. */
+  const multiRound = () =>
+    parseGenome({ ...structuredClone(BALANCED_ANALYSIS), protocols: { maxRounds: 3 } });
+
   it("stops iterating once the target score is reached", async () => {
-    const h = await makeHarness(sql);
+    const h = await makeHarness(sql, { genome: multiRound() });
     const decision = shouldContinue(
       h.ctx,
       { evaluation: { scores: { overall: 0.95 } }, costUsd: 0 } as never,
@@ -441,13 +500,26 @@ describe("stop criteria", () => {
   });
 
   it("stops when the watcher escalates to human review", async () => {
-    const h = await makeHarness(sql);
+    const h = await makeHarness(sql, { genome: multiRound() });
     const decision = shouldContinue(
       h.ctx,
       { evaluation: { scores: { overall: 0.4 }, recommendation: "human_review" }, costUsd: 0 } as never,
       0,
     );
     expect(decision.continue).toBe(false);
+  });
+
+  it("respects the genome's own round limit even when iterations remain", async () => {
+    // maxRounds (1) is tighter than maxIterations (3): the organization's
+    // declared limit governs, so a low score cannot push it to another round.
+    const h = await makeHarness(sql);
+    const decision = shouldContinue(
+      h.ctx,
+      { evaluation: { scores: { overall: 0.1 }, recommendation: "continue" }, costUsd: 0 } as never,
+      0,
+    );
+    expect(decision.continue).toBe(false);
+    expect(decision.reason).toContain("maxRounds");
   });
 });
 

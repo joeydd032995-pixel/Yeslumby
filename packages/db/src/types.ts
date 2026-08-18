@@ -120,6 +120,10 @@ export interface RunStepRow {
   attempt: number;
   latency_ms: number | null;
   error: unknown;
+  /** Worker holding this step. Only the holder may write its result. */
+  owner_token: string | null;
+  /** When the claim lapses and another worker may take over. */
+  lease_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }

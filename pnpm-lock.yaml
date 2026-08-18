@@ -21,6 +21,27 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.12))
 
+  packages/bench:
+    dependencies:
+      '@meta/db':
+        specifier: workspace:*
+        version: link:../db
+      '@meta/evolution':
+        specifier: workspace:*
+        version: link:../evolution
+      '@meta/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@meta/genome':
+        specifier: workspace:*
+        version: link:../genome
+      '@meta/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@meta/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/db:
     dependencies:
       '@meta/shared':
@@ -29,6 +50,21 @@ importers:
       postgres:
         specifier: ^3.4.5
         version: 3.4.9
+
+  packages/evolution:
+    dependencies:
+      '@meta/db':
+        specifier: workspace:*
+        version: link:../db
+      '@meta/genome':
+        specifier: workspace:*
+        version: link:../genome
+      '@meta/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@meta/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/gateway:
     dependencies:
@@ -48,6 +84,18 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/memory:
+    dependencies:
+      '@meta/db':
+        specifier: workspace:*
+        version: link:../db
+      '@meta/genome':
+        specifier: workspace:*
+        version: link:../genome
+      '@meta/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/runtime:
     dependencies:

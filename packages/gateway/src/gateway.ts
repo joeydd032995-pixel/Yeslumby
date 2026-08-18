@@ -25,6 +25,11 @@ export interface GatewayOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Base backoff in ms; doubles per attempt. */
   backoffMs?: number;
+  /**
+   * Notified when recording usage fails. The model call still succeeded, so
+   * this is a telemetry gap to alert on, not a request to retry.
+   */
+  onUsageError?: (error: unknown, context: { modelId: string; provider: string }) => void;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -36,6 +41,7 @@ export class Gateway implements ModelGateway {
   readonly #maxAttempts: number;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #backoffMs: number;
+  readonly #onUsageError: GatewayOptions["onUsageError"];
 
   constructor(options: GatewayOptions) {
     if (options.providers.length === 0) {
@@ -47,6 +53,7 @@ export class Gateway implements ModelGateway {
     this.#maxAttempts = options.maxAttemptsPerModel ?? 2;
     this.#sleep = options.sleep ?? defaultSleep;
     this.#backoffMs = options.backoffMs ?? 250;
+    this.#onUsageError = options.onUsageError;
   }
 
   async generate(request: ModelCallRequest): Promise<ModelCallResult> {
@@ -75,7 +82,12 @@ export class Gateway implements ModelGateway {
             seed: request.seed,
           });
 
-          const latencyMs = Math.max(0, Math.round(this.#clock.monotonicMs() - startedAt));
+          // A provider may report its own latency (the deterministic one does,
+          // so simulated timings are reproducible rather than dependent on how
+          // fast the test machine happens to be).
+          const latencyMs =
+            result.latencyMs ??
+            Math.max(0, Math.round(this.#clock.monotonicMs() - startedAt));
 
           // Structured output: the provider may hand back a parsed value, or
           // only text. The gateway guarantees `json` is populated when a schema
@@ -90,15 +102,25 @@ export class Gateway implements ModelGateway {
           // cheaper model shows up honestly in cost telemetry.
           const { costUsd, unpriced } = computeCost(modelId, result.usage);
 
-          await this.#usageSink?.record({
-            modelId,
-            provider: provider.name,
-            usage: result.usage,
-            costUsd,
-            unpriced,
-            latencyMs,
-            attribution: request.attribution ?? {},
-          });
+          // Telemetry failure must never re-run a paid call. Left inside the
+          // try block, a transient outage in the usage store would be caught by
+          // the retry loop below and treated as an inference failure — charging
+          // for the model again, on every retry and every fallback, while still
+          // failing to record the original. The call has already succeeded; a
+          // lost usage record is the strictly cheaper loss.
+          try {
+            await this.#usageSink?.record({
+              modelId,
+              provider: provider.name,
+              usage: result.usage,
+              costUsd,
+              unpriced,
+              latencyMs,
+              attribution: request.attribution ?? {},
+            });
+          } catch (sinkError) {
+            this.#onUsageError?.(sinkError, { modelId, provider: provider.name });
+          }
 
           return {
             modelId,

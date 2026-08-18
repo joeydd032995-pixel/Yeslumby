@@ -103,7 +103,11 @@ export async function runChallenges(
             targetAgentId: target.agentId,
             artifactId: result.artifactId,
             // The model names its own target; the runtime is authoritative.
-            challenge: { ...result.value, targetAgentId: target.agentId },
+            challenge: {
+              ...result.value,
+              targetAgentId: target.agentId,
+              objections: keepGroundedObjections(result.value.objections, target.proposal.claims),
+            },
             usage: result.usage,
             costUsd: result.costUsd,
           };
@@ -142,6 +146,33 @@ export async function runChallenges(
     disagreementLevel: computeDisagreement(results.map((r) => r.challenge)),
     cost,
   };
+}
+
+/**
+ * Discard objections against claims the target never made.
+ *
+ * An objection's severity feeds {@link computeDisagreement}, which decides
+ * whether synthesis must preserve contested claims. So an objection naming a
+ * claim id that does not exist — hallucinated, or carried over from another
+ * proposal — can force the whole organization down the contested path while
+ * challenging nothing real. Objections are kept only when they land on a claim
+ * the target actually made.
+ *
+ * If every objection is ungrounded, one is retained so the challenge is not
+ * silently converted into unanimous agreement; a challenge that engaged with
+ * nothing should read as a low-quality challenge, which the Watcher scores,
+ * rather than disappearing.
+ */
+export function keepGroundedObjections(
+  objections: Challenge["objections"],
+  claims: ReadonlyArray<{ id: string }>,
+): Challenge["objections"] {
+  const valid = new Set(claims.map((c) => c.id));
+  const grounded = objections.filter((o) => valid.has(o.targetClaimId));
+  if (grounded.length > 0) return grounded;
+
+  const first = objections[0];
+  return first ? [{ ...first, severity: "minor" as const }] : objections;
 }
 
 /**

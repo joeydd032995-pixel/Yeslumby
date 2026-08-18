@@ -12,6 +12,7 @@ export default defineConfig({
       "@meta/gateway": r("./packages/gateway/src/index.ts"),
       "@meta/runtime": r("./packages/runtime/src/index.ts"),
       "@meta/memory": r("./packages/memory/src/index.ts"),
+      "@meta/evolution": r("./packages/evolution/src/index.ts"),
       "@meta/bench": r("./packages/bench/src/index.ts"),
     },
   },

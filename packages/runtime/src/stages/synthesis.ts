@@ -1,7 +1,7 @@
 import { StageOutputError } from "@meta/shared";
 import { runs } from "@meta/db";
 import { durableStep } from "../journal.js";
-import { SynthesisSchema, jsonSchemaFor, type Synthesis } from "../schemas.js";
+import { makeSynthesisSchema, jsonSchemaFor, type Synthesis } from "../schemas.js";
 import { buildPrompt, type Channel } from "../prompt.js";
 import type { RunContext, StageCost } from "../context.js";
 import { summarizeProposal } from "./shared.js";
@@ -64,6 +64,45 @@ export interface SynthesisInputs {
 }
 
 /**
+ * Reject citations to artifacts that were never supplied.
+ *
+ * "Every final claim is traceable back to its evidence" is only true if the
+ * citations are real. A synthesis is model output like any other, and nothing
+ * in the schema stops it inventing a plausible-looking artifact id, citing one
+ * from another run, or attributing a claim to material it was never shown. The
+ * runtime knows exactly which artifacts fed this stage, so it checks.
+ *
+ * Returns a corrective instruction, or undefined when every citation resolves.
+ */
+export function checkSourcesResolve(
+  synthesis: Synthesis,
+  allowedArtifactIds: ReadonlySet<string>,
+): string | undefined {
+  const fabricated = new Set<string>();
+
+  const check = (sources: ReadonlyArray<{ artifactId: string }>) => {
+    for (const source of sources) {
+      if (!allowedArtifactIds.has(source.artifactId)) fabricated.add(source.artifactId);
+    }
+  };
+
+  for (const claim of [...synthesis.highConfidence, ...synthesis.workingHypotheses]) {
+    check(claim.sources);
+  }
+  for (const contested of synthesis.contested) {
+    for (const position of contested.positions) check(position.sources);
+  }
+
+  if (fabricated.size === 0) return undefined;
+
+  return (
+    `These source artifact ids do not exist in this run: ${[...fabricated].slice(0, 8).join(", ")}. ` +
+    `Cite only the artifact ids shown in the material you were given — they appear in each ` +
+    `source label. A claim you cannot attribute to supplied material belongs in unknowns.`
+  );
+}
+
+/**
  * Reject a synthesis that erased real disagreement.
  *
  * Returns a corrective instruction, or undefined when the output is acceptable.
@@ -113,6 +152,18 @@ export async function runSynthesis(
       },
     },
     async () => {
+      // Exactly the artifacts this stage was shown. Any citation outside this
+      // set is fabricated, whatever it looks like.
+      const allowedArtifactIds = new Set<string>([
+        ...inputs.proposals.map((p) => p.artifactId),
+        ...inputs.challenges.map((c) => c.artifactId),
+        ...inputs.falsifications.map((f) => f.artifactId),
+      ]);
+
+      // Citations are constrained to these ids in the schema itself, so a
+      // fabricated reference cannot be generated in the first place.
+      const scopedSchema = makeSynthesisSchema([...allowedArtifactIds]);
+
       const channels = buildSynthesisChannels(inputs);
       const built = buildPrompt({
         stageInstructions: INSTRUCTIONS,
@@ -128,7 +179,7 @@ export async function runSynthesis(
         callId: `${ctx.iteration}:SYNTHESIS`,
       });
 
-      const jsonSchema = jsonSchemaFor(SynthesisSchema);
+      const jsonSchema = jsonSchemaFor(scopedSchema);
       let correction: string | undefined;
       let usage = { inputTokens: 0, outputTokens: 0 };
       let costUsd = 0;
@@ -158,7 +209,7 @@ export async function runSynthesis(
         };
         costUsd += response.costUsd;
 
-        const parsed = SynthesisSchema.safeParse(response.json);
+        const parsed = scopedSchema.safeParse(response.json);
         if (!parsed.success) {
           correction =
             `Your output did not satisfy the required contract: ` +
@@ -191,6 +242,18 @@ export async function runSynthesis(
                 threshold,
               },
             );
+          }
+          continue;
+        }
+
+        const fabricated = checkSourcesResolve(parsed.data, allowedArtifactIds);
+        if (fabricated) {
+          correction = fabricated;
+          if (attempt === 3) {
+            throw new StageOutputError("synthesis cited artifacts that do not exist in this run", {
+              stage: "SYNTHESIS",
+              detail: fabricated,
+            });
           }
           continue;
         }

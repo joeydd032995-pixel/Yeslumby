@@ -104,13 +104,21 @@ export interface ClaimStepInput {
   stage: string;
   unitId: string;
   inputHash: string;
+  /** Identifies this worker. Only the holder may complete the step. */
+  ownerToken: string;
+  /** How long this claim is valid before another worker may take it over. */
+  leaseSeconds?: number;
 }
 
 export type ClaimResult =
   /** A completed step with a matching input hash: replay its recorded output. */
   | { kind: "replay"; step: RunStepRow }
   /** This caller now owns the step and must execute it. */
-  | { kind: "claimed"; step: RunStepRow };
+  | { kind: "claimed"; step: RunStepRow }
+  /** Another live worker owns it. Wait for their result rather than duplicating. */
+  | { kind: "in_progress"; step: RunStepRow };
+
+const DEFAULT_LEASE_SECONDS = 300;
 
 /**
  * Claim a unit of work, or return the recorded result of a prior attempt.
@@ -120,70 +128,126 @@ export type ClaimResult =
  * after a crash or a human-approval pause costs nothing and — critically —
  * repeats no model calls.
  *
+ * Ownership is leased. An earlier version returned "claimed" to every concurrent
+ * caller, which meant two workers entering the same fresh step both executed it
+ * and raced to write the journal — the at-most-once property held only within a
+ * single process. Now the row carries an owner token and an expiry: a live
+ * owner makes other callers wait, and an expired lease can be taken over so a
+ * dead worker cannot strand the run.
+ *
  * A completed row whose `input_hash` differs is stale: its inputs changed, so
  * the recorded output no longer describes this step and it is re-run.
  */
 export async function claimStep(sql: Sql, input: ClaimStepInput): Promise<ClaimResult> {
-  const existing = await sql<RunStepRow[]>`
-    SELECT * FROM run_steps WHERE run_id = ${input.runId} AND step_key = ${input.stepKey}
-  `;
-  const prior = existing[0];
+  const lease = input.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
 
-  if (prior?.status === "COMPLETED" && prior.input_hash === input.inputHash) {
-    return { kind: "replay", step: prior };
-  }
-
-  if (prior) {
-    const [row] = await sql<RunStepRow[]>`
-      UPDATE run_steps
-      SET status = 'RUNNING',
-          attempt = attempt + 1,
-          input_hash = ${input.inputHash},
-          error = NULL,
-          updated_at = now()
-      WHERE run_id = ${input.runId} AND step_key = ${input.stepKey}
-      RETURNING *
-    `;
-    if (!row) throw new Error(`failed to re-claim step ${input.stepKey}`);
-    return { kind: "claimed", step: row };
-  }
-
-  // ON CONFLICT covers a concurrent claimer inserting between the SELECT above
-  // and this INSERT; the loser re-reads rather than failing the run.
+  // A fresh step: whoever wins the insert owns it.
   const [inserted] = await sql<RunStepRow[]>`
-    INSERT INTO run_steps (run_id, step_key, iteration, stage, unit_id, input_hash, status)
+    INSERT INTO run_steps
+      (run_id, step_key, iteration, stage, unit_id, input_hash, status,
+       owner_token, lease_expires_at)
     VALUES (${input.runId}, ${input.stepKey}, ${input.iteration}, ${input.stage},
-            ${input.unitId}, ${input.inputHash}, 'RUNNING')
+            ${input.unitId}, ${input.inputHash}, 'RUNNING',
+            ${input.ownerToken}, now() + make_interval(secs => ${lease}))
     ON CONFLICT (run_id, step_key) DO NOTHING
     RETURNING *
   `;
   if (inserted) return { kind: "claimed", step: inserted };
 
-  const [raced] = await sql<RunStepRow[]>`
+  const [prior] = await sql<RunStepRow[]>`
     SELECT * FROM run_steps WHERE run_id = ${input.runId} AND step_key = ${input.stepKey}
   `;
-  if (!raced) throw new Error(`step ${input.stepKey} vanished after conflict`);
-  return raced.status === "COMPLETED" && raced.input_hash === input.inputHash
-    ? { kind: "replay", step: raced }
-    : { kind: "claimed", step: raced };
+  if (!prior) throw new Error(`step ${input.stepKey} vanished after conflict`);
+
+  if (prior.status === "COMPLETED" && prior.input_hash === input.inputHash) {
+    return { kind: "replay", step: prior };
+  }
+
+  // Someone else is working on it and their lease is still good.
+  if (
+    prior.status === "RUNNING" &&
+    prior.owner_token !== null &&
+    prior.owner_token !== input.ownerToken &&
+    prior.lease_expires_at !== null &&
+    prior.lease_expires_at.getTime() > Date.now()
+  ) {
+    return { kind: "in_progress", step: prior };
+  }
+
+  // Free to take: completed-but-stale, failed, our own re-entry, or an expired
+  // lease. The WHERE clause re-checks the state we decided on, so two workers
+  // racing to steal the same expired lease cannot both win.
+  const [taken] = await sql<RunStepRow[]>`
+    UPDATE run_steps
+    SET status = 'RUNNING',
+        attempt = attempt + 1,
+        input_hash = ${input.inputHash},
+        owner_token = ${input.ownerToken},
+        lease_expires_at = now() + make_interval(secs => ${lease}),
+        error = NULL,
+        updated_at = now()
+    WHERE run_id = ${input.runId}
+      AND step_key = ${input.stepKey}
+      AND (
+        owner_token IS NOT DISTINCT FROM ${prior.owner_token}
+        OR lease_expires_at IS NULL
+        OR lease_expires_at <= now()
+      )
+    RETURNING *
+  `;
+
+  if (taken) return { kind: "claimed", step: taken };
+
+  // Lost the race to another worker; re-read and defer to them.
+  const [current] = await sql<RunStepRow[]>`
+    SELECT * FROM run_steps WHERE run_id = ${input.runId} AND step_key = ${input.stepKey}
+  `;
+  if (!current) throw new Error(`step ${input.stepKey} vanished during takeover`);
+  return current.status === "COMPLETED" && current.input_hash === input.inputHash
+    ? { kind: "replay", step: current }
+    : { kind: "in_progress", step: current };
 }
 
+/** Re-read a step, for a waiter polling an owner it is deferring to. */
+export async function getStep(
+  sql: Sql,
+  runId: string,
+  stepKey: string,
+): Promise<RunStepRow | undefined> {
+  const [row] = await sql<RunStepRow[]>`
+    SELECT * FROM run_steps WHERE run_id = ${runId} AND step_key = ${stepKey}
+  `;
+  return row;
+}
+
+/**
+ * Record a step's result.
+ *
+ * Guarded by owner token: a worker whose lease expired and was taken over must
+ * not overwrite the result produced by whoever took it. Returns false when the
+ * write was refused for that reason.
+ */
 export async function completeStep(
   sql: Sql,
   runId: string,
   stepKey: string,
   output: unknown,
   latencyMs: number,
-): Promise<void> {
-  await sql`
+  ownerToken?: string,
+): Promise<boolean> {
+  const rows = await sql<{ id: string }[]>`
     UPDATE run_steps
     SET status = 'COMPLETED',
         output = ${sql.json(output as never)},
         latency_ms = ${latencyMs},
         error = NULL,
+        lease_expires_at = NULL,
         updated_at = now()
     WHERE run_id = ${runId} AND step_key = ${stepKey}
+      ${ownerToken ? sql`AND owner_token = ${ownerToken}` : sql``}
+    RETURNING id
   `;
+  return rows.length > 0;
 }
 
 export async function failStep(
@@ -191,11 +255,16 @@ export async function failStep(
   runId: string,
   stepKey: string,
   error: unknown,
+  ownerToken?: string,
 ): Promise<void> {
   await sql`
     UPDATE run_steps
-    SET status = 'FAILED', error = ${sql.json(error as never)}, updated_at = now()
+    SET status = 'FAILED',
+        error = ${sql.json(error as never)},
+        lease_expires_at = NULL,
+        updated_at = now()
     WHERE run_id = ${runId} AND step_key = ${stepKey}
+      ${ownerToken ? sql`AND owner_token = ${ownerToken}` : sql``}
   `;
 }
 
@@ -335,6 +404,12 @@ export async function traceProvenance(
   sql: Sql,
   artifactId: string,
 ): Promise<Array<AgentArtifactRow & { depth: number }>> {
+  // DISTINCT ON collapses an artifact reachable by several paths to its
+  // shortest one. In a normal round a proposal is both a direct parent of the
+  // synthesis and a parent of the challenges against it, so without this the
+  // same proposal appears at depth 1 and depth 2 — inflating provenance counts
+  // and drawing duplicate nodes in the graph. `depth` participates in the
+  // recursive UNION's row identity, so the CTE cannot dedupe on its own.
   return sql<Array<AgentArtifactRow & { depth: number }>>`
     WITH RECURSIVE trace AS (
       SELECT a.*, 0 AS depth FROM agent_artifacts a WHERE a.id = ${artifactId}
@@ -343,7 +418,10 @@ export async function traceProvenance(
       FROM trace t
       JOIN agent_artifacts parent ON parent.id = ANY(t.parent_artifact_ids)
       WHERE t.depth < 50
+    ),
+    shallowest AS (
+      SELECT DISTINCT ON (id) * FROM trace ORDER BY id, depth ASC
     )
-    SELECT * FROM trace ORDER BY depth ASC, created_at ASC
+    SELECT * FROM shallowest ORDER BY depth ASC, created_at ASC
   `;
 }

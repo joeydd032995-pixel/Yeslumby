@@ -17,6 +17,27 @@ export const SourceRefSchema = z.object({
 });
 export type SourceRef = z.output<typeof SourceRefSchema>;
 
+/**
+ * A source reference restricted to artifacts that actually exist in this run.
+ *
+ * Narrowing the id to an enum makes fabricated citations *unrepresentable*
+ * rather than merely detectable: the constraint travels into the JSON Schema
+ * sent to the provider, so structured output enforces it at generation time.
+ * Post-hoc validation still runs as a second line of defense for providers that
+ * do not honour the schema, but by then the call has been paid for.
+ */
+export function makeSourceRefSchema(allowedArtifactIds: readonly string[]) {
+  const artifactId =
+    allowedArtifactIds.length > 0
+      ? z.enum([...allowedArtifactIds] as [string, ...string[]])
+      : z.string().min(1);
+  return z.object({
+    kind: z.enum(["proposal", "challenge", "falsification", "memory", "tool"]),
+    artifactId,
+    agentId: z.string().optional(),
+  });
+}
+
 export const ClaimSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1),
@@ -129,6 +150,46 @@ export const SynthesisSchema = z.object({
   ),
 });
 export type Synthesis = z.output<typeof SynthesisSchema>;
+
+/**
+ * The synthesis contract for one specific call, with citations restricted to
+ * the artifacts that call was actually shown.
+ */
+export function makeSynthesisSchema(allowedArtifactIds: readonly string[]) {
+  const sourceRef = makeSourceRefSchema(allowedArtifactIds);
+  const claim = z.object({
+    text: z.string().min(1),
+    confidence: z.number().min(0).max(1),
+    sources: z.array(sourceRef).min(1),
+  });
+
+  return z.object({
+    summary: z.string().min(1).max(2000),
+    highConfidence: z.array(claim),
+    workingHypotheses: z.array(claim),
+    contested: z.array(
+      z.object({
+        question: z.string().min(1),
+        positions: z
+          .array(
+            z.object({
+              agentIds: z.array(z.string()).min(1),
+              position: z.string().min(1),
+              reasoning: z.string().min(1),
+              sources: z.array(sourceRef),
+            }),
+          )
+          .min(2),
+        whyUnresolved: z.string().min(1),
+        resolvingEvidence: z.string().min(1),
+      }),
+    ),
+    unknowns: z.array(z.string()),
+    recommendedExperiments: z.array(
+      z.object({ description: z.string().min(1), resolves: z.string().min(1) }),
+    ),
+  });
+}
 
 export const WatcherScoresSchema = z.object({
   diversity: z.number().min(0).max(1).optional(),

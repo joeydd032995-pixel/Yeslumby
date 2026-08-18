@@ -1,0 +1,16 @@
+{
+  "name": "@meta/evolution",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@meta/db": "workspace:*",
+    "@meta/genome": "workspace:*",
+    "@meta/memory": "workspace:*",
+    "@meta/shared": "workspace:*"
+  }
+}

@@ -1,10 +1,15 @@
+import { contentHash } from "@meta/shared";
 import type { Sql } from "../client.js";
 import type { EcosystemRow, GenomeOrigin, GenomeVersionRow } from "../types.js";
 
 export interface CreateGenomeVersionInput {
   id: string;
   ecosystemId: string;
-  genomeHash: string;
+  /**
+   * Optional. The hash is computed here regardless; supplying it asks this
+   * function to verify your computation agrees.
+   */
+  genomeHash?: string;
   genome: unknown;
   parentIds?: string[];
   origin: GenomeOrigin;
@@ -29,17 +34,31 @@ export interface CreateGenomeVersionResult {
  * - **Identical content does not fork the lineage.** If a mutation happens to
  *   reproduce an existing genome exactly, the existing version is returned
  *   rather than a duplicate created. Content addressing makes this detectable.
+ *
+ * - **The hash is computed here, not accepted from the caller.** These rows are
+ *   append-only, so a wrong content address is permanent: it would make two
+ *   different genomes deduplicate into one, or two identical genomes fork the
+ *   lineage. A caller-supplied hash is treated as an assertion to check, never
+ *   as the value to store.
  */
 export async function createGenomeVersion(
   sql: Sql,
   input: CreateGenomeVersionInput,
 ): Promise<CreateGenomeVersionResult> {
+  const genomeHash = contentHash(input.genome);
+  if (input.genomeHash !== undefined && input.genomeHash !== genomeHash) {
+    throw new Error(
+      `genome hash mismatch: caller supplied ${input.genomeHash.slice(0, 12)} but the ` +
+        `genome content hashes to ${genomeHash.slice(0, 12)}`,
+    );
+  }
+
   return sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${input.ecosystemId}))`;
 
     const existing = await tx<GenomeVersionRow[]>`
       SELECT * FROM genome_versions
-      WHERE ecosystem_id = ${input.ecosystemId} AND genome_hash = ${input.genomeHash}
+      WHERE ecosystem_id = ${input.ecosystemId} AND genome_hash = ${genomeHash}
     `;
     if (existing[0]) return { version: existing[0], created: false };
 
@@ -55,7 +74,7 @@ export async function createGenomeVersion(
         ${input.id},
         ${input.ecosystemId},
         ${next?.next ?? 1},
-        ${input.genomeHash},
+        ${genomeHash},
         ${tx.json(input.genome as never)},
         ${input.parentIds ?? []},
         ${input.origin},
@@ -113,6 +132,9 @@ export async function getLineage(
   sql: Sql,
   versionId: string,
 ): Promise<Array<GenomeVersionRow & { depth: number }>> {
+  // As with provenance, a shared ancestor is reachable at several depths and
+  // `depth` makes those rows distinct to the UNION. Collapse to the shortest
+  // path so the graph draws one node per version.
   return sql<Array<GenomeVersionRow & { depth: number }>>`
     WITH RECURSIVE ancestry AS (
       SELECT gv.*, 0 AS depth
@@ -125,8 +147,11 @@ export async function getLineage(
       FROM ancestry a
       JOIN genome_versions parent ON parent.id = ANY(a.parent_ids)
       WHERE a.depth < 200
+    ),
+    shallowest AS (
+      SELECT DISTINCT ON (id) * FROM ancestry ORDER BY id, depth ASC
     )
-    SELECT * FROM ancestry ORDER BY depth ASC, version ASC
+    SELECT * FROM shallowest ORDER BY depth ASC, version ASC
   `;
 }
 

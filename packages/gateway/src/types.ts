@@ -108,6 +108,12 @@ export interface ProviderResult {
   json?: unknown;
   usage: TokenUsage;
   finishReason: string;
+  /**
+   * Provider-reported latency. When set, the gateway records this instead of
+   * wall-clock elapsed time — which is what lets the deterministic provider
+   * produce reproducible timings rather than ones that vary with machine speed.
+   */
+  latencyMs?: number;
 }
 
 /** Receives a usage record for every completed call. */

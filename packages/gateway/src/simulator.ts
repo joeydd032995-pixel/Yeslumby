@@ -131,6 +131,9 @@ export class SimulatorProvider implements ModelProvider {
         outputTokens: Math.ceil(text.length / this.#charsPerToken),
       },
       finishReason: "stop",
+      // Reported rather than slept: latency-sensitive experiments get a stable
+      // number, and no test spends real time producing it.
+      latencyMs: this.#latencyMs,
     };
   }
 

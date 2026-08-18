@@ -88,6 +88,13 @@ export interface InsertEvaluationInput {
   costUsd?: number;
 }
 
+/**
+ * Record a Watcher evaluation.
+ *
+ * Upserts on (run_id, iteration): a round is evaluated once, and a replay or a
+ * crash-and-resume must not append a second evaluation for the same round. The
+ * logical key is enforced by a unique constraint, so this cannot drift.
+ */
 export async function insertEvaluation(
   sql: Sql,
   input: InsertEvaluationInput,
@@ -102,6 +109,13 @@ export async function insertEvaluation(
       ${sql.json(input.suggestedMutations as never)}, ${input.recommendation},
       ${input.modelId ?? null}, ${input.costUsd ?? 0}
     )
+    ON CONFLICT (run_id, iteration) DO UPDATE SET
+      scores = EXCLUDED.scores,
+      failure_modes = EXCLUDED.failure_modes,
+      suggested_mutations = EXCLUDED.suggested_mutations,
+      recommendation = EXCLUDED.recommendation,
+      model_id = EXCLUDED.model_id,
+      cost_usd = EXCLUDED.cost_usd
     RETURNING *
   `;
   if (!row) throw new Error("evaluation insert returned no row");

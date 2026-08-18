@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { contentHash, systemClock, type Clock } from "@meta/shared";
 import { runs, type Sql } from "@meta/db";
 
@@ -19,7 +20,23 @@ export interface JournalContext {
   runId: string;
   iteration: number;
   clock?: Clock;
+  /**
+   * Identifies this worker for step leases. Defaults to a per-process token;
+   * supply one explicitly when several workers share a process.
+   */
+  ownerToken?: string;
+  /** How long a claim is held before another worker may take it over. */
+  leaseSeconds?: number;
+  /** Longest a caller waits for another worker's in-flight step. */
+  maxWaitMs?: number;
+  /** Injected so tests do not spend real time waiting. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** One token per process, so a crashed process's leases are visibly foreign. */
+const PROCESS_TOKEN = `w_${randomUUID()}`;
+
+const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface StepSpec {
   stage: string;
@@ -54,18 +71,41 @@ export async function durableStep<T>(
   execute: () => Promise<T>,
 ): Promise<StepResult<T>> {
   const clock = ctx.clock ?? systemClock;
+  const sleep = ctx.sleep ?? defaultSleep;
+  const ownerToken = ctx.ownerToken ?? PROCESS_TOKEN;
   const unitId = spec.unitId ?? "stage";
   const key = stepKey(ctx.runId, ctx.iteration, spec.stage, unitId);
   const inputHash = contentHash(spec.input);
+  const maxWaitMs = ctx.maxWaitMs ?? 120_000;
 
-  const claim = await runs.claimStep(ctx.sql, {
+  const claimArgs = {
     runId: ctx.runId,
     stepKey: key,
     iteration: ctx.iteration,
     stage: spec.stage,
     unitId,
     inputHash,
-  });
+    ownerToken,
+    ...(ctx.leaseSeconds !== undefined ? { leaseSeconds: ctx.leaseSeconds } : {}),
+  };
+
+  const deadline = Date.now() + maxWaitMs;
+  let claim = await runs.claimStep(ctx.sql, claimArgs);
+
+  // Another live worker holds this step. Waiting for its result is the whole
+  // point: executing it here too would make the model call twice, which is
+  // exactly what the journal exists to prevent.
+  while (claim.kind === "in_progress" && Date.now() < deadline) {
+    await sleep(200);
+    claim = await runs.claimStep(ctx.sql, claimArgs);
+  }
+
+  if (claim.kind === "in_progress") {
+    throw new Error(
+      `step ${key} is held by another worker (${claim.step.owner_token ?? "unknown"}) ` +
+        `and did not complete within ${maxWaitMs}ms`,
+    );
+  }
 
   if (claim.kind === "replay") {
     return {
@@ -79,12 +119,25 @@ export async function durableStep<T>(
   try {
     const value = await execute();
     const latencyMs = Math.max(0, Math.round(clock.monotonicMs() - startedAt));
-    await runs.completeStep(ctx.sql, ctx.runId, key, value, latencyMs);
+
+    const stored = await runs.completeStep(ctx.sql, ctx.runId, key, value, latencyMs, ownerToken);
+    if (!stored) {
+      // Our lease expired and another worker took over. Theirs is the result of
+      // record; ours is discarded rather than overwriting it.
+      const current = await runs.getStep(ctx.sql, ctx.runId, key);
+      if (current?.status === "COMPLETED") {
+        return {
+          value: current.output as T,
+          replayed: true,
+          latencyMs: current.latency_ms ?? latencyMs,
+        };
+      }
+    }
     return { value, replayed: false, latencyMs };
   } catch (error) {
     // Record the failure so a resumed run can see what happened, then re-throw.
     // A failed step is not replayed: the next claim retries it.
-    await runs.failStep(ctx.sql, ctx.runId, key, serializeError(error));
+    await runs.failStep(ctx.sql, ctx.runId, key, serializeError(error), ownerToken);
     throw error;
   }
 }

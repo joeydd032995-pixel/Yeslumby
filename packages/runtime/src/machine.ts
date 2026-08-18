@@ -66,14 +66,27 @@ export function requiresApproval(level: string): boolean {
 
 export async function executeRound(ctx: RunContext): Promise<RoundResult> {
   const genome = ctx.genome;
+  // Two totals, because they answer different questions. `usage`/`costUsd` are
+  // what this round cost, replayed steps included, and drive budget checks and
+  // efficiency. `fresh*` are what this *invocation* actually spent, and are the
+  // only values folded into the run's persisted totals — otherwise re-entering
+  // a completed round would bill it a second time.
   let usage = zeroUsage();
   let costUsd = 0;
+  let freshUsage = zeroUsage();
+  let freshCostUsd = 0;
   const replayFlags: boolean[] = [];
 
-  const track = (c: { usage: TokenUsage; costUsd: number }) => {
+  const track = (c: { usage: TokenUsage; costUsd: number }, replayed = false) => {
     usage = addUsage(usage, c.usage);
     costUsd += c.costUsd;
+    if (!replayed) {
+      freshUsage = addUsage(freshUsage, c.usage);
+      freshCostUsd += c.costUsd;
+    }
   };
+
+  const checkBudget = () => assertWithinBudget(ctx, costUsd, usage);
 
   await runs.updateRunProgress(ctx.sql, ctx.run.id, {
     status: "RUNNING",
@@ -83,8 +96,9 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
 
   // --- CONTEXT -------------------------------------------------------------
   const context = await runContextStage(ctx);
-  track(context.cost);
+  track(context.cost, context.replayed);
   replayFlags.push(context.replayed);
+  checkBudget();
 
   // --- PROPOSALS (independent fan-out) -------------------------------------
   await runs.updateRunProgress(ctx.sql, ctx.run.id, { stage: "PROPOSALS" });
@@ -93,10 +107,9 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
     context: context.context,
     memories: context.memories,
   });
-  track(proposals.cost);
+  track(proposals.cost, proposals.proposals.every((p) => p.replayed));
   replayFlags.push(...proposals.proposals.map((p) => p.replayed));
-
-  assertWithinBudget(ctx, costUsd, usage);
+  checkBudget();
 
   // --- CHALLENGES (edge-driven) --------------------------------------------
   let challenges: ChallengeOutcome[] = [];
@@ -104,10 +117,14 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
   if (genome.protocols.crossChallenge) {
     await runs.updateRunProgress(ctx.sql, ctx.run.id, { stage: "CHALLENGES" });
     const result = await runChallenges(ctx, proposals.proposals);
-    track(result.cost);
+    track(result.cost, result.challenges.every((c) => c.replayed));
     challenges = result.challenges;
     disagreementLevel = result.disagreementLevel;
     replayFlags.push(...result.challenges.map((c) => c.replayed));
+    // Checked after every paid stage, not once. A round that clears the ceiling
+    // during challenges would otherwise run falsification, synthesis, and the
+    // watcher — several more paid calls — before anyone noticed.
+    checkBudget();
   }
 
   // --- FALSIFICATION -------------------------------------------------------
@@ -115,9 +132,10 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
   if (genome.protocols.falsificationRequired) {
     await runs.updateRunProgress(ctx.sql, ctx.run.id, { stage: "FALSIFICATION" });
     const result = await runFalsification(ctx, proposals.proposals, challenges);
-    track(result.cost);
+    track(result.cost, result.falsifications.every((f) => f.replayed));
     falsifications = result.falsifications;
     replayFlags.push(...result.falsifications.map((f) => f.replayed));
+    checkBudget();
   }
 
   // --- HUMAN APPROVAL ------------------------------------------------------
@@ -138,8 +156,9 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
     falsifications,
     disagreementLevel,
   });
-  track(synthesis.cost);
+  track(synthesis.cost, synthesis.replayed);
   replayFlags.push(synthesis.replayed);
+  checkBudget();
 
   // --- WATCHER -------------------------------------------------------------
   await runs.updateRunProgress(ctx.sql, ctx.run.id, { stage: "WATCHER" });
@@ -155,17 +174,21 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
 
   let evaluation: WatcherEvaluation | undefined;
   if (watcher) {
-    track(watcher.cost);
+    track(watcher.cost, watcher.replayed);
     replayFlags.push(watcher.replayed);
     evaluation = {
       ...watcher.evaluation,
-      scores: groundEfficiency(
-        watcher.evaluation.scores,
-        costUsd + watcher.cost.costUsd,
-        genome.stopCriteria.maxCostUsd,
-      ),
+      // `costUsd` already includes the watcher's own spend via track() above;
+      // adding it again would overstate utilization and systematically depress
+      // efficiency for watcher-heavy genomes.
+      scores: groundEfficiency(watcher.evaluation.scores, costUsd, genome.stopCriteria.maxCostUsd),
     };
 
+    // Upserts on (run_id, iteration). Replaying a completed round — or crashing
+    // between this insert and the next step — would otherwise write a second
+    // evaluation for the same round and quietly double-count it in any history
+    // built from this table. The model that actually served is recorded, which
+    // may be a fallback rather than the configured primary.
     await telemetry.insertEvaluation(ctx.sql, {
       id: ctx.ids.next("evaluation"),
       runId: ctx.run.id,
@@ -175,16 +198,20 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
       failureModes: evaluation.failureModes,
       suggestedMutations: evaluation.suggestedMutations,
       recommendation: evaluation.recommendation,
-      modelId: genome.watcher.model.primary,
+      modelId: watcher.modelId ?? genome.watcher.model.primary,
       costUsd: watcher.cost.costUsd,
     });
   }
 
-  await runs.addRunUsage(ctx.sql, ctx.run.id, {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    costUsd,
-  });
+  // Only what this invocation actually spent. Replayed steps were billed when
+  // they first ran.
+  if (freshCostUsd > 0 || freshUsage.inputTokens > 0 || freshUsage.outputTokens > 0) {
+    await runs.addRunUsage(ctx.sql, ctx.run.id, {
+      inputTokens: freshUsage.inputTokens,
+      outputTokens: freshUsage.outputTokens,
+      costUsd: freshCostUsd,
+    });
+  }
 
   return {
     synthesis: synthesis.synthesis,
@@ -270,8 +297,21 @@ export function shouldContinue(
 ): { continue: boolean; reason: string } {
   const stop = ctx.genome.stopCriteria;
 
-  if (iteration + 1 >= stop.maxIterations) {
-    return { continue: false, reason: "reached maxIterations" };
+  // Two independent caps, and the tighter one governs. `protocols.maxRounds` is
+  // the organization's own limit on how many rounds it may take;
+  // `stopCriteria.maxIterations` is the operator's budget ceiling. Consulting
+  // only the latter let a low watcher score push a genome past the round limit
+  // it declared — with the defaults, maxRounds is 1 and maxIterations is 3.
+  const roundLimit = Math.min(stop.maxIterations, ctx.genome.protocols.maxRounds);
+  if (iteration + 1 >= roundLimit) {
+    return {
+      continue: false,
+      reason:
+        roundLimit === ctx.genome.protocols.maxRounds &&
+        ctx.genome.protocols.maxRounds < stop.maxIterations
+          ? "reached protocols.maxRounds"
+          : "reached maxIterations",
+    };
   }
   const overall = result.evaluation?.scores.overall;
   if (overall !== undefined && overall >= stop.targetScore) {

@@ -67,6 +67,8 @@ export interface WatcherResult {
   artifactId: string;
   replayed: boolean;
   cost: StageCost;
+  /** The model that actually served, which may be a fallback. */
+  modelId?: string;
   /** Mutations removed because they would escalate privilege. */
   rejectedMutations: Array<{ type: string; reason: string }>;
 }
@@ -104,6 +106,11 @@ export async function runWatcher(
         dimensions: ctx.genome.watcher.dimensions,
         proposals: inputs.proposals.map((p) => p.proposal),
         challenges: inputs.challenges.map((c) => c.challenge),
+        // Falsification belongs in the hash: a round where proposals were found
+        // already contradicted is a materially different organization outcome
+        // from one where they held up, and omitting it meant the two hashed
+        // identically — so changing falsification results replayed a stale score.
+        falsifications: inputs.falsifications.map((f) => f.falsification),
         synthesis: inputs.synthesis,
         costUsd: inputs.costUsd,
       },
@@ -154,6 +161,17 @@ export async function runWatcher(
           },
           {
             kind: "PEER_OUTPUT",
+            note: "falsification outcomes — whether the account could be tested",
+            items: inputs.falsifications.map((f) => ({
+              source: `${f.agentId} on ${f.targetAgentId}`,
+              content:
+                `verdict: ${f.falsification.verdict}; ` +
+                `${f.falsification.falsifiablePredictions.length} predictions, ` +
+                `${f.falsification.concreteTests.length} concrete tests`,
+            })),
+          },
+          {
+            kind: "PEER_OUTPUT",
             note: "the synthesis produced",
             items: [
               {
@@ -171,6 +189,7 @@ export async function runWatcher(
         parentArtifactIds: [
           ...inputs.proposals.map((p) => p.artifactId),
           ...inputs.challenges.map((c) => c.artifactId),
+          ...inputs.falsifications.map((f) => f.artifactId),
         ],
       });
       return {
@@ -178,6 +197,10 @@ export async function runWatcher(
         artifactId: result.artifactId,
         usage: result.usage,
         costUsd: result.costUsd,
+        // The model that actually served, which may be a fallback. Recording
+        // the configured primary would attribute evaluations to a model that
+        // produced no output.
+        modelId: result.modelId,
       };
     },
   );
@@ -200,6 +223,7 @@ export async function runWatcher(
     artifactId: step.value.artifactId,
     replayed: step.replayed,
     cost: { usage: step.value.usage, costUsd: step.value.costUsd },
+    ...(step.value.modelId ? { modelId: step.value.modelId } : {}),
     rejectedMutations: rejected,
   };
 }
