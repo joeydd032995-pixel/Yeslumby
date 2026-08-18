@@ -56,7 +56,62 @@ function sentence(rng: Rng, ctx: SynthContext): string {
   return `On ${subject}: ${rng.pick(CLAUSES)} (${rng.pick(HEDGES)}, per ${ctx.voice}).`;
 }
 
+const WORDS = [
+  "alpha", "beta", "gamma", "delta", "sigma", "theta", "kappa", "lambda",
+  "vector", "signal", "cohort", "sample", "vertex", "cipher", "quanta",
+];
+
+/**
+ * Generate a string satisfying a `pattern` constraint.
+ *
+ * Schemas here carry real patterns — agent ids must be slugs, model ids must be
+ * `provider/model` — and a generator that ignores them produces output that
+ * validates as a string and then fails the actual contract. Rather than
+ * implement general regex inversion, candidates in the shapes these schemas
+ * use are tested against the pattern and the first match wins.
+ */
+function stringMatchingPattern(pattern: string, rng: Rng, schema: JsonSchema): string {
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern);
+  } catch {
+    return rng.pick(WORDS);
+  }
+
+  const a = rng.pick(WORDS);
+  const b = rng.pick(WORDS);
+  const n = rng.int(10, 9999);
+
+  const candidates = [
+    `${a}-${n}`,
+    a,
+    `${a}/${b}-${n}`,
+    `${a}/${b}`,
+    `${a}_${b}`,
+    `${a}${n}`,
+    String(n),
+    `${a}@${b}.test`,
+    `https://${a}.test/${b}`,
+    "2025-01-01T00:00:00.000Z",
+  ];
+
+  const min = schema.minLength ?? 0;
+  const max = schema.maxLength ?? Number.MAX_SAFE_INTEGER;
+
+  for (const candidate of candidates) {
+    if (candidate.length < min || candidate.length > max) continue;
+    if (regex.test(candidate)) return candidate;
+  }
+  // No candidate matched. Returning a plain word keeps generation total; the
+  // caller's schema validation will surface the mismatch rather than this
+  // silently producing something that looks valid.
+  return a;
+}
+
 function stringFor(key: string, rng: Rng, ctx: SynthContext, schema: JsonSchema): string {
+  if (typeof schema.pattern === "string") {
+    return stringMatchingPattern(schema.pattern, rng, schema);
+  }
   if (schema.format === "date-time") return "2025-01-01T00:00:00.000Z";
   if (schema.format === "uri") return "https://example.test/source";
 

@@ -30,6 +30,7 @@ export interface JsonSchema {
   maxItems?: number;
   minLength?: number;
   maxLength?: number;
+  pattern?: string;
   format?: string;
   description?: string;
   additionalProperties?: boolean | JsonSchema;

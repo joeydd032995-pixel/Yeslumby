@@ -49,6 +49,24 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/runtime:
+    dependencies:
+      '@meta/db':
+        specifier: workspace:*
+        version: link:../db
+      '@meta/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@meta/genome':
+        specifier: workspace:*
+        version: link:../genome
+      '@meta/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   packages/shared: {}
 
 packages:
