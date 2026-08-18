@@ -30,6 +30,16 @@ importers:
         specifier: ^3.4.5
         version: 3.4.9
 
+  packages/gateway:
+    dependencies:
+      '@meta/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   packages/genome:
     dependencies:
       '@meta/shared':
