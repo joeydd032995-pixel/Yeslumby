@@ -87,6 +87,18 @@ export {
 export { callAgent, summarizeProposal, type AgentCallResult } from "./stages/shared.js";
 
 export {
+  ToolRegistry,
+  deterministicWebSearch,
+  toolResultChannel,
+  describeTools,
+  assertCapability,
+  type ToolHandler,
+  type ToolRequest,
+  type ToolOutcome,
+  type ToolExecutionContext,
+} from "./tools.js";
+
+export {
   runEcosystem,
   summarizeRound,
   isStagnant,
