@@ -1,7 +1,7 @@
 import { RunPaused, StopCriterionError, addUsage, zeroUsage, type TokenUsage } from "@meta/shared";
 import { runs, telemetry } from "@meta/db";
 import type { RunContext } from "./context.js";
-import { runContextStage } from "./stages/context.js";
+import { runContextStage, type PriorRound } from "./stages/context.js";
 import { runProposals } from "./stages/proposals.js";
 import { runChallenges } from "./stages/challenges.js";
 import { runFalsification } from "./stages/falsification.js";
@@ -64,7 +64,18 @@ export function requiresApproval(level: string): boolean {
   return level === "all" || level === "high_risk";
 }
 
-export async function executeRound(ctx: RunContext): Promise<RoundResult> {
+export interface RoundOptions {
+  /**
+   * Result of the previous round in this run. Reaches proposers as shared
+   * framing via the CONTEXT stage, never as a proposal input.
+   */
+  prior?: PriorRound;
+}
+
+export async function executeRound(
+  ctx: RunContext,
+  options: RoundOptions = {},
+): Promise<RoundResult> {
   const genome = ctx.genome;
   // Two totals, because they answer different questions. `usage`/`costUsd` are
   // what this round cost, replayed steps included, and drive budget checks and
@@ -95,7 +106,7 @@ export async function executeRound(ctx: RunContext): Promise<RoundResult> {
   });
 
   // --- CONTEXT -------------------------------------------------------------
-  const context = await runContextStage(ctx);
+  const context = await runContextStage(ctx, options.prior);
   track(context.cost, context.replayed);
   replayFlags.push(context.replayed);
   checkBudget();

@@ -117,3 +117,30 @@ export async function listAuditEntries(
     ORDER BY created_at DESC LIMIT ${limit}
   `;
 }
+
+/**
+ * Erase an organization and everything under it.
+ *
+ * Genome versions are append-only, so the cascade is refused unless this
+ * transaction opts in. `SET LOCAL` scopes the permission to this transaction
+ * alone — it reverts on commit or rollback, so the guarantee is relaxed for
+ * exactly the statements that follow and nothing else.
+ *
+ * Deliberately not exposed through any read-path helper: erasure is an
+ * administrative action, and making it require an explicit call to a function
+ * named `purgeOrganization` is part of the safeguard.
+ */
+export async function purgeOrganization(sql: Sql, orgId: string): Promise<void> {
+  await sql.begin(async (tx) => {
+    await tx`SET LOCAL meta.allow_purge = 'on'`;
+    await tx`DELETE FROM organizations WHERE id = ${orgId}`;
+  });
+}
+
+/** Erase a single ecosystem, including its immutable version history. */
+export async function purgeEcosystem(sql: Sql, ecosystemId: string): Promise<void> {
+  await sql.begin(async (tx) => {
+    await tx`SET LOCAL meta.allow_purge = 'on'`;
+    await tx`DELETE FROM ecosystems WHERE id = ${ecosystemId}`;
+  });
+}

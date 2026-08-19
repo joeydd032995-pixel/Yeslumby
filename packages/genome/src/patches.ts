@@ -322,6 +322,104 @@ function mergeDefined<T extends object>(base: T, patch: object): T {
   return out as T;
 }
 
+
+export interface PatchApplicability {
+  applicable: MutationPatch[];
+  dropped: Array<{ patch: MutationPatch; reason: string }>;
+}
+
+/**
+ * Partition patches into those that can apply to this genome and those that
+ * cannot.
+ *
+ * Patches are model output. A Watcher naming an agent that does not exist —
+ * hallucinated, or carried over from a genome it saw earlier — is an ordinary
+ * occurrence, not an exceptional one. Letting it throw means one bad reference
+ * aborts an entire evolutionary search, so callers running unattended filter
+ * first and proceed with whatever is genuinely applicable.
+ *
+ * This is a pre-check for graceful degradation, not a security boundary:
+ * `applyPatches` still enforces policy and re-validates, and anything this
+ * misses fails there.
+ */
+export function partitionApplicablePatches(
+  genome: ArchitectureGenome,
+  patches: readonly MutationPatchInput[],
+): PatchApplicability {
+  // An empty proposal is a normal outcome — a Watcher may simply have nothing
+  // to suggest — so it partitions to nothing rather than failing validation.
+  if (patches.length === 0) return { applicable: [], dropped: [] };
+
+  const validated = parsePatches(patches);
+  const agentIds = new Set(genome.agents.map((a) => a.id));
+
+  const applicable: MutationPatch[] = [];
+  const dropped: Array<{ patch: MutationPatch; reason: string }> = [];
+  const keep = (p: MutationPatch) => applicable.push(p);
+  const drop = (p: MutationPatch, reason: string) => dropped.push({ patch: p, reason });
+
+  for (const patch of validated) {
+    switch (patch.type) {
+      case "ADD_AGENT":
+        if (agentIds.has(patch.agent.id)) {
+          drop(patch, `agent "${patch.agent.id}" already exists`);
+        } else {
+          agentIds.add(patch.agent.id);
+          keep(patch);
+        }
+        break;
+
+      case "REMOVE_AGENT":
+        if (!agentIds.has(patch.agentId)) {
+          drop(patch, `agent "${patch.agentId}" does not exist`);
+        } else if (patch.agentId === genome.synthesizerId) {
+          drop(patch, `agent "${patch.agentId}" is the synthesizer`);
+        } else {
+          agentIds.delete(patch.agentId);
+          keep(patch);
+        }
+        break;
+
+      case "UPDATE_PROMPT":
+      case "UPDATE_MODEL":
+      case "UPDATE_CAPABILITIES":
+        if (!agentIds.has(patch.agentId)) {
+          drop(patch, `agent "${patch.agentId}" does not exist`);
+        } else {
+          keep(patch);
+        }
+        break;
+
+      case "ADD_EDGE":
+        if (!agentIds.has(patch.edge.from) || !agentIds.has(patch.edge.to)) {
+          drop(patch, `edge references an agent that does not exist`);
+        } else if (patch.edge.from === patch.edge.to) {
+          drop(patch, `an agent cannot ${patch.edge.interaction} itself`);
+        } else {
+          keep(patch);
+        }
+        break;
+
+      case "REMOVE_EDGE":
+        if (
+          !genome.edges.some(
+            (e) => e.from === patch.from && e.to === patch.to && e.interaction === patch.interaction,
+          )
+        ) {
+          drop(patch, "edge does not exist");
+        } else {
+          keep(patch);
+        }
+        break;
+
+      default:
+        keep(patch);
+    }
+  }
+
+  return { applicable, dropped };
+}
+
 // ---------------------------------------------------------------------------
 // Diffing, for the evolution graph
 // ---------------------------------------------------------------------------

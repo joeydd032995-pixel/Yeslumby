@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { genomes, type Sql } from "../src/index.js";
+import { genomes, tenancy, type Sql } from "../src/index.js";
 import { contentHash } from "@meta/shared";
 import { ensureSchema, seedTenant, testSql } from "./helpers.js";
 
@@ -29,7 +29,7 @@ describe("genome_versions immutability", () => {
     // straight to SQL, not just for callers who use the repository.
     await expect(
       sql`UPDATE genome_versions SET genome = ${sql.json({ a: 2 } as never)} WHERE id = ${version.id}`,
-    ).rejects.toThrow(/append-only/);
+    ).rejects.toThrow(/cannot change/);
   });
 
   it("rejects DELETE at the database level", async () => {
@@ -192,5 +192,108 @@ describe("lineage", () => {
 
     const kids = await genomes.getDescendants(sql, parent.id);
     expect(kids).toHaveLength(1);
+  });
+});
+
+describe("immutability is about identity, not attribution", () => {
+  it("still rejects a change to genome content", async () => {
+    const t = await seedTenant(sql, "immc");
+    const { version } = await genomes.createGenomeVersion(sql, {
+      id: t.ids.next("genomeVersion"),
+      ecosystemId: t.ecosystemId,
+      genome: { c: 1 },
+      origin: "SEED",
+    });
+    await expect(
+      sql`UPDATE genome_versions SET genome = ${sql.json({ c: 2 } as never)} WHERE id = ${version.id}`,
+    ).rejects.toThrow(/content and lineage cannot change/);
+  });
+
+  it("still rejects a change to lineage", async () => {
+    const t = await seedTenant(sql, "imml");
+    const { version } = await genomes.createGenomeVersion(sql, {
+      id: t.ids.next("genomeVersion"),
+      ecosystemId: t.ecosystemId,
+      genome: { l: 1 },
+      origin: "SEED",
+    });
+    await expect(
+      sql`UPDATE genome_versions SET parent_ids = ARRAY['forged'] WHERE id = ${version.id}`,
+    ).rejects.toThrow(/content and lineage cannot change/);
+  });
+
+  it("permits nulling attribution, so a user can actually be erased", async () => {
+    const t = await seedTenant(sql, "immattr");
+    const { version } = await genomes.createGenomeVersion(sql, {
+      id: t.ids.next("genomeVersion"),
+      ecosystemId: t.ecosystemId,
+      genome: { a: 1 },
+      origin: "SEED",
+      createdBy: t.userId,
+    });
+    expect(version.created_by).toBe(t.userId);
+
+    // ON DELETE SET NULL is an UPDATE. Before this was allowed, the referential
+    // action could never fire and deleting the author was impossible.
+    await expect(sql`DELETE FROM users WHERE id = ${t.userId}`).resolves.toBeDefined();
+
+    const after = await genomes.getGenomeVersion(sql, version.id);
+    expect(after?.created_by).toBeNull();
+    // Content and hash are untouched.
+    expect(after?.genome_hash).toBe(version.genome_hash);
+  });
+
+  it("still refuses a bare DELETE", async () => {
+    const t = await seedTenant(sql, "immdel2");
+    const { version } = await genomes.createGenomeVersion(sql, {
+      id: t.ids.next("genomeVersion"),
+      ecosystemId: t.ecosystemId,
+      genome: { d: 1 },
+      origin: "SEED",
+    });
+    await expect(
+      sql`DELETE FROM genome_versions WHERE id = ${version.id}`,
+    ).rejects.toThrow(/DELETE is forbidden/);
+  });
+
+  it("permits erasure through the explicit purge path", async () => {
+    const t = await seedTenant(sql, "purge");
+    await genomes.createGenomeVersion(sql, {
+      id: t.ids.next("genomeVersion"),
+      ecosystemId: t.ecosystemId,
+      genome: { p: 1 },
+      origin: "SEED",
+    });
+
+    await tenancy.purgeEcosystem(sql, t.ecosystemId);
+
+    expect(await genomes.getEcosystem(sql, t.ecosystemId)).toBeUndefined();
+    const remaining = await genomes.listGenomeVersions(sql, t.ecosystemId);
+    expect(remaining).toHaveLength(0);
+  });
+
+  it("scopes the purge permission to its own transaction", async () => {
+    const t = await seedTenant(sql, "purgescope");
+    const { version } = await genomes.createGenomeVersion(sql, {
+      id: t.ids.next("genomeVersion"),
+      ecosystemId: t.ecosystemId,
+      genome: { s: 1 },
+      origin: "SEED",
+    });
+
+    await tenancy.purgeEcosystem(sql, t.ecosystemId);
+
+    // SET LOCAL reverts on commit, so the next statement is guarded again.
+    const other = await seedTenant(sql, "purgescope2");
+    const { version: v2 } = await genomes.createGenomeVersion(sql, {
+      id: other.ids.next("genomeVersion"),
+      ecosystemId: other.ecosystemId,
+      genome: { s: 2 },
+      origin: "SEED",
+    });
+    await expect(
+      sql`DELETE FROM genome_versions WHERE id = ${v2.id}`,
+    ).rejects.toThrow(/DELETE is forbidden/);
+    expect(version.id).toBeTruthy();
   });
 });

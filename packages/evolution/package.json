@@ -11,6 +11,7 @@
     "@meta/db": "workspace:*",
     "@meta/genome": "workspace:*",
     "@meta/memory": "workspace:*",
-    "@meta/shared": "workspace:*"
+    "@meta/shared": "workspace:*",
+    "@meta/runtime": "workspace:*"
   }
 }
