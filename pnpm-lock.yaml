@@ -62,6 +62,9 @@ importers:
       '@meta/memory':
         specifier: workspace:*
         version: link:../memory
+      '@meta/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@meta/shared':
         specifier: workspace:*
         version: link:../shared

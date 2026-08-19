@@ -51,7 +51,7 @@ export type {
   StageCost,
 } from "./context.js";
 
-export { runContextStage, type ContextResult } from "./stages/context.js";
+export { runContextStage, type ContextResult, type PriorRound } from "./stages/context.js";
 export {
   runProposals,
   buildProposalChannels,
@@ -87,10 +87,20 @@ export {
 export { callAgent, summarizeProposal, type AgentCallResult } from "./stages/shared.js";
 
 export {
+  runEcosystem,
+  summarizeRound,
+  isStagnant,
+  type IterationRecord,
+  type EcosystemRunResult,
+  type RunEcosystemOptions,
+} from "./orchestrator.js";
+
+export {
   executeRound,
   shouldContinue,
   requiresApproval,
   STAGES,
   type Stage,
   type RoundResult,
+  type RoundOptions,
 } from "./machine.js";

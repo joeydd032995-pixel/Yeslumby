@@ -9,6 +9,14 @@ export {
 } from "./mutate.js";
 
 export {
+  evolveEcosystem,
+  type EvolveDeps,
+  type EvolveOptions,
+  type EvolveResult,
+  type GenerationRecord,
+} from "./evolve.js";
+
+export {
   crossover,
   repair,
   type CrossoverStrategy,
