@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A versioned runtime for executable AI organizations — a compiler and evolutionary engine for Architecture Genomes.",
+  "description": "A versioned runtime for executable AI organizations \u2014 a compiler and evolutionary engine for Architecture Genomes.",
   "engines": {
     "node": ">=22"
   },
@@ -17,13 +17,18 @@
     "typecheck": "tsc --noEmit --pretty",
     "test": "vitest run",
     "test:watch": "vitest",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "seed": "tsx scripts/seed-dev.ts",
+    "dev": "pnpm --filter @meta/web dev",
+    "build:web": "pnpm --filter @meta/web build",
+    "verify:ui": "tsx scripts/verify/ui.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "playwright": "^1.49.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

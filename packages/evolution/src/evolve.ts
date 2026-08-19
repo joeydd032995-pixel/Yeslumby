@@ -1,5 +1,10 @@
 import { genomes, runs, type Sql } from "@meta/db";
-import { hashGenome, type ArchitectureGenome, type MutationPatchInput } from "@meta/genome";
+import {
+  hashGenome,
+  partitionApplicablePatches,
+  type ArchitectureGenome,
+  type MutationPatchInput,
+} from "@meta/genome";
 import type { ModelGateway } from "@meta/gateway";
 import { runEcosystem, type RunContext, type EcosystemRunResult } from "@meta/runtime";
 import type { Clock, IdGenerator } from "@meta/shared";
@@ -181,13 +186,29 @@ export async function evolveEcosystem(
       break;
     }
 
-    // Mutate for the next generation.
-    const patches = collectPatches(outcome.result);
-    if (patches.length === 0) {
-      stoppedBecause = "watcher proposed no structural change";
+    // Mutate for the next generation. Patches are model output, so those that
+    // reference agents or edges the genome does not have are dropped rather
+    // than allowed to abort the search — a Watcher naming a hallucinated agent
+    // is an ordinary occurrence, and one bad reference should not end an
+    // evolutionary run that is otherwise progressing.
+    const proposed = collectPatches(outcome.result);
+    const { applicable, dropped } = partitionApplicablePatches(currentGenome, proposed);
+
+    if (dropped.length > 0) {
+      record.note +=
+        ` (${dropped.length} inapplicable patch${dropped.length === 1 ? "" : "es"} dropped: ` +
+        `${dropped.map((d) => d.reason).slice(0, 2).join("; ")})`;
+    }
+
+    if (applicable.length === 0) {
+      stoppedBecause =
+        proposed.length === 0
+          ? "watcher proposed no structural change"
+          : "watcher proposed no applicable structural change";
       record.outcome = record.outcome === "seed" ? "no-mutation" : record.outcome;
       break;
     }
+    const patches = applicable;
 
     const mutation = await proposeAndApplyMutation(
       {

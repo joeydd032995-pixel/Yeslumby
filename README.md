@@ -10,8 +10,12 @@ lineage; most of the design here follows from taking it literally.
 ```bash
 scripts/dev-db.sh up          # real Postgres 16 + pgvector, in-repo
 pnpm install
-pnpm typecheck && pnpm test   # 205 tests against the real database
+pnpm typecheck && pnpm test   # 252 tests against the real database
 pnpm demo                     # the whole loop, end to end
+
+pnpm seed                     # a dev tenant with runs, versions, memory
+pnpm dev                      # the UI at localhost:3100
+pnpm verify:ui                # drive it with a real browser, capture screenshots
 ```
 
 ## What it does
@@ -29,6 +33,27 @@ other → breed a third from two parents → promote the winner.
 
   promoted v3 role-union as the ecosystem's current version
 ```
+
+## Two loops
+
+Confusing these is what makes "iteration" ambiguous, so they are separate:
+
+| Loop | Scope | Genome | What changes between steps |
+|---|---|---|---|
+| `runEcosystem` | iterations *within* one run | pinned to one version | accumulated context — the prior round's synthesis |
+| `evolveEcosystem` | generations *across* runs | a new version per generation | the architecture itself |
+
+A run carries a single `genome_version_id`, and the thesis is that an execution
+is reproducible against a named version — so a run that swapped architectures
+mid-flight would make "which version produced this?" unanswerable. Changing the
+organization is therefore a new run, which is also what makes generations
+comparable.
+
+A generation is promoted **only if it is actually better**. Without that, a
+mutation engine steered by a noisy evaluator wanders rather than climbs while
+the lineage records drift as progress. A regression rolls back — but the losing
+version stays in the graph, because "we tried this and it was worse" is exactly
+the knowledge that stops it being retried.
 
 ## Three memories, kept apart
 

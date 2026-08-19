@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "types": ["node", "react", "react-dom"],
+    "allowJs": true,
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@meta/shared": ["../../packages/shared/src/index.ts"],
+      "@meta/genome": ["../../packages/genome/src/index.ts"],
+      "@meta/db": ["../../packages/db/src/index.ts"],
+      "@meta/gateway": ["../../packages/gateway/src/index.ts"],
+      "@meta/runtime": ["../../packages/runtime/src/index.ts"],
+      "@meta/memory": ["../../packages/memory/src/index.ts"],
+      "@meta/evolution": ["../../packages/evolution/src/index.ts"],
+      "@meta/bench": ["../../packages/bench/src/index.ts"]
+    }
+  },
+  "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

@@ -11,3 +11,6 @@ out/
 .env.local
 .DS_Store
 coverage/
+
+# Verification screenshots — regenerate with `pnpm verify:ui`
+artifacts/
