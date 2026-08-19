@@ -1,0 +1,16 @@
+{
+  "name": "@meta/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@meta/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "zod": "^4.4.3"
+  }
+}
