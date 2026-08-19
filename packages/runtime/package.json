@@ -1,0 +1,17 @@
+{
+  "name": "@meta/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@meta/db": "workspace:*",
+    "@meta/gateway": "workspace:*",
+    "@meta/genome": "workspace:*",
+    "@meta/shared": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

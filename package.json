@@ -1,0 +1,33 @@
+{
+  "name": "meta-ecosystem",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A versioned runtime for executable AI organizations — a compiler and evolutionary engine for Architecture Genomes.",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "db:up": "./scripts/dev-db.sh up",
+    "db:stop": "./scripts/dev-db.sh stop",
+    "db:reset": "./scripts/dev-db.sh reset",
+    "db:psql": "./scripts/dev-db.sh psql",
+    "migrate": "tsx packages/db/src/migrate.ts",
+    "typecheck": "tsc --noEmit --pretty",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx scripts/demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
