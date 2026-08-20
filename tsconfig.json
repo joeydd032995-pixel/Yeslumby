@@ -41,8 +41,6 @@
       "@meta/bench": ["packages/bench/src/index.ts"],
       "@meta/bench/*": ["packages/bench/src/*"],
       "@meta/seed": ["packages/seed/src/index.ts"],
-      "@meta/seed/*": ["packages/seed/src/*"],
-      "@meta/seed": ["packages/seed/src/index.ts"],
       "@meta/seed/*": ["packages/seed/src/*"]
     }
   },

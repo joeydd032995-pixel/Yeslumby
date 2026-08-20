@@ -72,24 +72,6 @@ export async function seedDevTenant(sql: Sql, options: SeedOptions = {}): Promis
     },
   });
 
-  // Idempotent: a re-seed starts from a clean tenant rather than stacking.
-  // Genome versions are append-only, so erasure goes through the explicit
-  // purge path rather than a bare DELETE.
-  const orgId = "org_dev";
-  await tenancy.purgeOrganization(sql, orgId);
-  // Users are not org-scoped — a person can belong to several organizations —
-  // so purging the org leaves them behind.
-  await sql`DELETE FROM users WHERE id LIKE 'usr\_%'`;
-
-  await tenancy.createOrganization(sql, { id: orgId, name: "Dev Org", slug: "dev-org" });
-  const workspaceId = "ws_dev";
-  await tenancy.createWorkspace(sql, {
-    id: workspaceId,
-    orgId,
-    name: "Dev Workspace",
-    slug: "dev",
-  });
-
   const people: Array<{
     id: string;
     email: string;
@@ -106,10 +88,34 @@ export async function seedDevTenant(sql: Sql, options: SeedOptions = {}): Promis
     { id: "usr_operator", email: "operator@example.test", name: "Cass (operator)", role: "OPERATOR" },
     { id: "usr_viewer", email: "viewer@example.test", name: "Dev (viewer)", role: "VIEWER" },
   ];
+
+  // Idempotent: a re-seed starts from a clean tenant rather than stacking.
+  // Genome versions are append-only, so erasure goes through the explicit
+  // purge path rather than a bare DELETE.
+  const orgId = "org_dev";
+  await tenancy.purgeOrganization(sql, orgId);
+  // Users are not org-scoped — a person can belong to several organizations —
+  // so purging the org leaves them behind.
+  //
+  // Only the four ids this seed owns are removed. A pattern match would be
+  // both wrong and dangerous here: every user id begins `usr_`, so a wildcard
+  // reaches real users in other organizations, and this now runs against a
+  // hosted database rather than a disposable local one.
+  await sql`DELETE FROM users WHERE id = ANY(${people.map((p) => p.id)})`;
+
+  await tenancy.createOrganization(sql, { id: orgId, name: "Dev Org", slug: "dev-org" });
+  const workspaceId = "ws_dev";
+  await tenancy.createWorkspace(sql, {
+    id: workspaceId,
+    orgId,
+    name: "Dev Workspace",
+    slug: "dev",
+  });
+
   for (const p of people) {
     await tenancy.createUser(sql, { id: p.id, email: p.email, name: p.name });
     await tenancy.addMembership(sql, {
-      id: ids.next("evaluation"),
+      id: ids.next("membership"),
       orgId,
       userId: p.id,
       role: p.role,

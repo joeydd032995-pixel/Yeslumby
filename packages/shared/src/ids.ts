@@ -45,6 +45,7 @@ const PREFIXES = {
   benchmarkResult: "bmr",
   usageEvent: "ue",
   evaluation: "ev",
+  membership: "mbr",
   auditEntry: "aud",
 } as const;
 
