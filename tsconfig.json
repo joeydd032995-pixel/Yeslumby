@@ -39,7 +39,9 @@
       "@meta/evolution": ["packages/evolution/src/index.ts"],
       "@meta/evolution/*": ["packages/evolution/src/*"],
       "@meta/bench": ["packages/bench/src/index.ts"],
-      "@meta/bench/*": ["packages/bench/src/*"]
+      "@meta/bench/*": ["packages/bench/src/*"],
+      "@meta/seed": ["packages/seed/src/index.ts"],
+      "@meta/seed/*": ["packages/seed/src/*"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "scripts/**/*.ts"],

@@ -47,6 +47,9 @@ importers:
       '@meta/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@meta/seed':
+        specifier: workspace:*
+        version: link:../../packages/seed
       '@meta/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -163,6 +166,33 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/seed:
+    dependencies:
+      '@meta/bench':
+        specifier: workspace:*
+        version: link:../bench
+      '@meta/db':
+        specifier: workspace:*
+        version: link:../db
+      '@meta/evolution':
+        specifier: workspace:*
+        version: link:../evolution
+      '@meta/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@meta/genome':
+        specifier: workspace:*
+        version: link:../genome
+      '@meta/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@meta/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@meta/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/shared: {}
 

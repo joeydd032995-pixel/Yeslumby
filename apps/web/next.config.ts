@@ -12,6 +12,7 @@ const config: NextConfig = {
     "@meta/memory",
     "@meta/evolution",
     "@meta/bench",
+    "@meta/seed",
   ],
   experimental: {
     // The runtime opens real Postgres connections from server components.

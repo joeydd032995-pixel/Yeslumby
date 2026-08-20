@@ -6,6 +6,45 @@ export interface DbOptions {
   url?: string;
   /** Max pooled connections. Tests use 1 to keep failures deterministic. */
   max?: number;
+  /**
+   * Use named prepared statements. Defaults to off behind a transaction
+   * pooler, which cannot support them — see `isTransactionPooler`.
+   */
+  prepare?: boolean;
+}
+
+/**
+ * True when the URL points at a transaction-mode connection pooler.
+ *
+ * A transaction pooler assigns each transaction whichever backend is free, so
+ * a statement prepared on one connection is absent on the next. That fails
+ * intermittently and only under concurrency — the worst shape a bug can take —
+ * so it is detected from the URL rather than left to a caller to remember.
+ *
+ * Providers advertise the mode three different ways, and missing any of them
+ * re-introduces the bug:
+ *
+ * - an explicit `pgbouncer=true` parameter;
+ * - a distinguishing port — Supavisor serves transaction mode on 6543, and
+ *   PgBouncer conventionally listens on 6432;
+ * - nothing at all in the port. Neon (and therefore Vercel Postgres) puts
+ *   PgBouncer in transaction mode behind a `-pooler` host on the standard
+ *   5432, so the port is no evidence either way.
+ *
+ * The hostname test deliberately matches the `-pooler.` suffix rather than the
+ * word "pooler" anywhere: Supabase's hostname contains it too, but its 5432
+ * endpoint is *session* mode, which holds one backend for the connection and
+ * where prepared statements are both safe and worth keeping.
+ */
+export function isTransactionPooler(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.get("pgbouncer") === "true") return true;
+    if (parsed.port === "6543" || parsed.port === "6432") return true;
+    return parsed.hostname.includes("-pooler.");
+  } catch {
+    return false;
+  }
 }
 
 export function resolveDatabaseUrl(explicit?: string): string {
@@ -27,8 +66,15 @@ export function resolveDatabaseUrl(explicit?: string): string {
  * the precision requirement is known.
  */
 export function createSql(options: DbOptions = {}): Sql {
-  return postgres(resolveDatabaseUrl(options.url), {
-    max: options.max ?? 10,
+  const url = resolveDatabaseUrl(options.url);
+  const pooled = isTransactionPooler(url);
+
+  return postgres(url, {
+    // Behind a pooler the connection budget is shared with every other
+    // serverless instance, so each process keeps a small share rather than
+    // the generous default a single long-lived server can afford.
+    max: options.max ?? (pooled ? 3 : 10),
+    prepare: options.prepare ?? !pooled,
     onnotice: () => {},
     transform: { undefined: null },
   });

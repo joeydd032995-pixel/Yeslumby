@@ -14,6 +14,7 @@ export default defineConfig({
       "@meta/memory": r("./packages/memory/src/index.ts"),
       "@meta/evolution": r("./packages/evolution/src/index.ts"),
       "@meta/bench": r("./packages/bench/src/index.ts"),
+      "@meta/seed": r("./packages/seed/src/index.ts"),
     },
   },
   test: {
