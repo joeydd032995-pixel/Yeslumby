@@ -6,6 +6,31 @@ export interface DbOptions {
   url?: string;
   /** Max pooled connections. Tests use 1 to keep failures deterministic. */
   max?: number;
+  /**
+   * Use named prepared statements. Defaults to off behind a transaction
+   * pooler, which cannot support them — see `isTransactionPooler`.
+   */
+  prepare?: boolean;
+}
+
+/**
+ * True when the URL points at a transaction-mode connection pooler.
+ *
+ * A transaction pooler assigns each transaction whichever backend is free, so
+ * a statement prepared on one connection is absent on the next. That fails
+ * intermittently and only under concurrency — the worst shape a bug can take —
+ * so it is detected from the URL rather than left to a caller to remember.
+ *
+ * Supavisor serves transaction mode on 6543 and session mode on 5432; PgBouncer
+ * advertises itself with the `pgbouncer=true` parameter.
+ */
+export function isTransactionPooler(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.port === "6543" || parsed.searchParams.get("pgbouncer") === "true";
+  } catch {
+    return false;
+  }
 }
 
 export function resolveDatabaseUrl(explicit?: string): string {
@@ -27,8 +52,15 @@ export function resolveDatabaseUrl(explicit?: string): string {
  * the precision requirement is known.
  */
 export function createSql(options: DbOptions = {}): Sql {
-  return postgres(resolveDatabaseUrl(options.url), {
-    max: options.max ?? 10,
+  const url = resolveDatabaseUrl(options.url);
+  const pooled = isTransactionPooler(url);
+
+  return postgres(url, {
+    // Behind a pooler the connection budget is shared with every other
+    // serverless instance, so each process keeps a small share rather than
+    // the generous default a single long-lived server can afford.
+    max: options.max ?? (pooled ? 3 : 10),
+    prepare: options.prepare ?? !pooled,
     onnotice: () => {},
     transform: { undefined: null },
   });

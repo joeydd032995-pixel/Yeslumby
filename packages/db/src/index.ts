@@ -1,4 +1,11 @@
-export { createSql, resolveDatabaseUrl, num, type Sql, type DbOptions } from "./client.js";
+export {
+  createSql,
+  resolveDatabaseUrl,
+  isTransactionPooler,
+  num,
+  type Sql,
+  type DbOptions,
+} from "./client.js";
 export { migrate, resetSchema } from "./migrate.js";
 export * from "./types.js";
 
