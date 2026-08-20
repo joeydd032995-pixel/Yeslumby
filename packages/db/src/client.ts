@@ -21,13 +21,27 @@ export interface DbOptions {
  * intermittently and only under concurrency — the worst shape a bug can take —
  * so it is detected from the URL rather than left to a caller to remember.
  *
- * Supavisor serves transaction mode on 6543 and session mode on 5432; PgBouncer
- * advertises itself with the `pgbouncer=true` parameter.
+ * Providers advertise the mode three different ways, and missing any of them
+ * re-introduces the bug:
+ *
+ * - an explicit `pgbouncer=true` parameter;
+ * - a distinguishing port — Supavisor serves transaction mode on 6543, and
+ *   PgBouncer conventionally listens on 6432;
+ * - nothing at all in the port. Neon (and therefore Vercel Postgres) puts
+ *   PgBouncer in transaction mode behind a `-pooler` host on the standard
+ *   5432, so the port is no evidence either way.
+ *
+ * The hostname test deliberately matches the `-pooler.` suffix rather than the
+ * word "pooler" anywhere: Supabase's hostname contains it too, but its 5432
+ * endpoint is *session* mode, which holds one backend for the connection and
+ * where prepared statements are both safe and worth keeping.
  */
 export function isTransactionPooler(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.port === "6543" || parsed.searchParams.get("pgbouncer") === "true";
+    if (parsed.searchParams.get("pgbouncer") === "true") return true;
+    if (parsed.port === "6543" || parsed.port === "6432") return true;
+    return parsed.hostname.includes("-pooler.");
   } catch {
     return false;
   }

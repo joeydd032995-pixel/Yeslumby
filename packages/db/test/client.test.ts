@@ -18,6 +18,20 @@ describe("isTransactionPooler", () => {
     );
   });
 
+  it("recognizes PgBouncer's conventional port", () => {
+    expect(isTransactionPooler("postgresql://u:p@db.example.com:6432/postgres")).toBe(true);
+  });
+
+  it("recognizes a Neon pooled host on the standard port", () => {
+    // Neon — and therefore Vercel Postgres — runs PgBouncer in transaction mode
+    // on 5432 with no flag in the URL, so the hostname is the only signal.
+    expect(
+      isTransactionPooler(
+        "postgresql://u:p@ep-cool-name-a1b2c3-pooler.us-east-2.aws.neon.tech:5432/neondb",
+      ),
+    ).toBe(true);
+  });
+
   it("treats session mode as a direct connection", () => {
     // Session mode holds one backend for the whole connection, so prepared
     // statements are safe there even though it is still a pooler.
