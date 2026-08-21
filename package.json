@@ -21,7 +21,8 @@
     "seed": "tsx scripts/seed-dev.ts",
     "dev": "pnpm --filter @meta/web dev",
     "build:web": "pnpm --filter @meta/web build",
-    "verify:ui": "tsx scripts/verify/ui.ts"
+    "verify:ui": "tsx scripts/verify/ui.ts",
+    "gen:migrations": "tsx scripts/gen-migrations.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
