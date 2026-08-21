@@ -22,7 +22,8 @@
     "dev": "pnpm --filter @meta/web dev",
     "build:web": "pnpm --filter @meta/web build",
     "verify:ui": "tsx scripts/verify/ui.ts",
-    "gen:migrations": "tsx scripts/gen-migrations.ts"
+    "gen:migrations": "tsx scripts/gen-migrations.ts",
+    "validate": "tsx scripts/validate.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

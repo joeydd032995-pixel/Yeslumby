@@ -15,6 +15,7 @@ export default defineConfig({
       "@meta/evolution": r("./packages/evolution/src/index.ts"),
       "@meta/bench": r("./packages/bench/src/index.ts"),
       "@meta/seed": r("./packages/seed/src/index.ts"),
+      "@meta/validation": r("./packages/validation/src/index.ts"),
     },
   },
   test: {
