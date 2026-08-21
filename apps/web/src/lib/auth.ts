@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { tenancy, type Role } from "@meta/db";
@@ -151,3 +151,29 @@ export async function assertEcosystemAccess(
   if (!orgId || orgId !== session.orgId) throw new AccessDenied("VIEWER");
   return session;
 }
+
+/**
+ * Whether a request may sign in as something more privileged than VIEWER.
+ *
+ * The development sign-in hands out a session for any seeded user, which is
+ * right on a laptop and wrong on a public URL: OPERATOR can start runs and
+ * ARCHITECT can approve mutations. Gating it on a key keeps the deployment
+ * demonstrable — anyone can look — without letting a passer-by drive it.
+ *
+ * With no key configured, privileged sign-in is refused in production and
+ * allowed everywhere else. That way a deployment is VIEWER-only because of
+ * what it is, rather than because someone remembered to set a variable.
+ */
+export function isAdminKeyValid(provided: string | undefined): boolean {
+  const expected = process.env.ADMIN_SIGNIN_KEY;
+  if (!expected) return process.env.NODE_ENV !== "production";
+  if (!provided) return false;
+  // Hashed to a fixed width first, so the comparison cannot leak the key's
+  // length through timing.
+  const a = createHash("sha256").update(provided, "utf8").digest();
+  const b = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(a, b);
+}
+
+/** The role a visitor may assume without presenting a key. */
+export const PUBLIC_ROLE: Role = "VIEWER";
