@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    # Migrations run themselves — every test suite calls the idempotent
+    # `migrate()` on first use — so the service only needs to exist with
+    # pgvector available. Host/port/db/user match the default every suite
+    # falls back to (packages/db/test/helpers.ts and friends) when
+    # TEST_DATABASE_URL is unset, so no connection env var is needed here.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: meta_ecosystem_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The exact command Vercel's deploy runs. A workspace importer added
+      # without a matching pnpm-lock.yaml update fails here, on a PR, instead
+      # of at deploy time.
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Enable pgvector on the test database
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U postgres -d meta_ecosystem_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector;"
+        env:
+          PGPASSWORD: ""
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
