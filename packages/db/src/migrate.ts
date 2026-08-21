@@ -1,10 +1,6 @@
-import { readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { createSql, type Sql } from "./client.js";
+import { EMBEDDED_MIGRATIONS } from "./migrations.generated.js";
 import { sha256 } from "@meta/shared";
-
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
 /**
  * Forward-only SQL migrator.
@@ -27,7 +23,10 @@ export async function migrate(sql: Sql, opts: { silent?: boolean } = {}): Promis
     )
   `;
 
-  const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+  // Read from the embedded copy rather than the directory. A serverless bundle
+  // ships the module graph, not sibling directories, so a `readdir` here found
+  // nothing once deployed while working perfectly on a developer's machine.
+  const migrations = [...EMBEDDED_MIGRATIONS].sort((a, b) => a.name.localeCompare(b.name));
 
   const appliedRows = await sql<{ name: string; checksum: string }[]>`
     SELECT name, checksum FROM schema_migrations
@@ -35,8 +34,7 @@ export async function migrate(sql: Sql, opts: { silent?: boolean } = {}): Promis
   const applied = new Map(appliedRows.map((r) => [r.name, r.checksum]));
 
   const ran: string[] = [];
-  for (const name of files) {
-    const body = await readFile(join(MIGRATIONS_DIR, name), "utf8");
+  for (const { name, body } of migrations) {
     const checksum = sha256(body);
     const previous = applied.get(name);
 
