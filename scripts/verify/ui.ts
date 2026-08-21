@@ -65,6 +65,13 @@ async function run(browser: Browser): Promise<void> {
   await shot(page, "03-signin");
 
   // --- sign in ------------------------------------------------------------
+  // A public deployment offers VIEWER only, so reaching an ARCHITECT session —
+  // which the mutation and run-starting checks below need — means presenting
+  // the key. Locally, where no key is configured, the parameter is ignored.
+  const adminKey = process.env.ADMIN_SIGNIN_KEY;
+  await page.goto(`${BASE}/signin${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ""}`, {
+    waitUntil: "networkidle",
+  });
   await page.locator("form", { hasText: "Blaise" }).locator("button").click();
   await page.waitForURL("**/dashboard", { timeout: 15000 });
   record("sign in reaches the dashboard", page.url().includes("/dashboard"));
