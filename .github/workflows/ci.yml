@@ -59,3 +59,12 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # `apps/web` sits outside the root tsconfig's `include`, so `pnpm
+      # typecheck` never sees it — this is what actually catches an
+      # apps/web-only error (a noUncheckedIndexedAccess violation, a missing
+      # migrations directory in the serverless bundle) before Vercel does.
+      # No env vars: DATABASE_URL and SESSION_SECRET both have build-safe
+      # fallbacks, and nothing on the build path executes a real query.
+      - name: Build apps/web
+        run: pnpm build:web
