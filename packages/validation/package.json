@@ -1,0 +1,20 @@
+{
+  "name": "@meta/validation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@meta/bench": "workspace:*",
+    "@meta/db": "workspace:*",
+    "@meta/evolution": "workspace:*",
+    "@meta/gateway": "workspace:*",
+    "@meta/genome": "workspace:*",
+    "@meta/memory": "workspace:*",
+    "@meta/runtime": "workspace:*",
+    "@meta/shared": "workspace:*"
+  }
+}
