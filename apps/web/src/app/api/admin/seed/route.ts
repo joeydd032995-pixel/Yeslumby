@@ -67,9 +67,59 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, ...summary });
   } catch (error) {
     console.error("[seed] failed", error);
+    const message = error instanceof Error ? error.message : String(error);
     return Response.json(
-      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      { ok: false, error: message, connection: describeConnection(message) },
       { status: 500 },
     );
   }
+}
+
+/**
+ * A redacted description of `DATABASE_URL`, attached to connection failures.
+ *
+ * Diagnosing a rejected credential otherwise means asking someone to inspect a
+ * value they cannot fully see: a leading space inside a password is invisible
+ * in an input box, survives a copy-paste, and parses as a perfectly valid URL,
+ * so the only symptom is an authentication failure indistinguishable from a
+ * genuinely wrong password. This reports the shape of the value without ever
+ * revealing the secret — every field is a length or a boolean.
+ */
+function describeConnection(message: string): Record<string, unknown> | undefined {
+  if (!/password|authentication|ENOTFOUND|ECONNREFUSED|timeout|SASL/i.test(message)) {
+    return undefined;
+  }
+
+  const raw = process.env.DATABASE_URL;
+  if (!raw) return { present: false };
+
+  const parsed = raw.match(/^(\w+):\/\/([^:]*):([\s\S]*)@([^:/?]+)(?::(\d+))?\/([^?]*)(\?.*)?$/);
+  if (!parsed) {
+    return { present: true, parses: false, length: raw.length };
+  }
+
+  // Regex groups are `string | undefined` under `noUncheckedIndexedAccess`;
+  // every group here is non-optional in the pattern except the port and query.
+  const [, scheme = "", user = "", password = "", host = "", port, database = "", query] = parsed;
+  return {
+    present: true,
+    parses: true,
+    scheme,
+    user,
+    host,
+    port: port ?? "(none — defaults to 5432)",
+    database,
+    query: query ?? "(none)",
+    sslmodeRequire: /sslmode=require/.test(query ?? ""),
+    transactionPooler: port === "6543" || port === "6432" || host.includes("-pooler."),
+    password: {
+      length: password.length,
+      leadingWhitespace: /^\s/.test(password),
+      trailingWhitespace: /\s$/.test(password),
+      containsWhitespace: /\s/.test(password),
+      needsUrlEncoding: /[@:/?#%\[\]]/.test(password),
+      nonAscii: /[^\x20-\x7e]/.test(password),
+    },
+    rawHasSurroundingWhitespace: raw !== raw.trim(),
+  };
 }
