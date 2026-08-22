@@ -11,6 +11,7 @@ import type { Clock, IdGenerator } from "@meta/shared";
 import type { EmbeddingProvider } from "@meta/memory";
 import { consolidateStructural } from "@meta/memory";
 import { proposeAndApplyMutation, promoteVersion, describeDiff } from "./mutate.js";
+import type { GenerationAssessment, GenerationAssessor } from "./assess.js";
 
 /**
  * The generational loop.
@@ -40,6 +41,14 @@ export interface EvolveDeps {
   clock: Clock;
   ids: IdGenerator;
   embedder: EmbeddingProvider;
+  /**
+   * How generations are judged against the champion. Omitted, promotion falls
+   * back to the Watcher's score for the generation's run against
+   * `minImprovement` — one scalar from one objective. Supplied, the assessor
+   * decides, and an implementation measuring many tasks can decide statistically
+   * rather than against a guessed epsilon. See {@link GenerationAssessor}.
+   */
+  assessor?: GenerationAssessor;
 }
 
 export interface GenerationRecord {
@@ -56,6 +65,18 @@ export interface GenerationRecord {
     mutationId: string;
     patches: number;
     summary: string;
+  };
+  /**
+   * What the assessor measured, when one was supplied. `score` is the assessor's
+   * own aggregate and is not comparable with the Watcher `score` above — they
+   * measure different things, so both are reported rather than one overwriting
+   * the other.
+   */
+  assessment?: {
+    score: number | null;
+    tasks: number;
+    /** The assessor's account of the promotion decision. */
+    verdict: string;
   };
   outcome: "seed" | "promoted" | "rejected-regression" | "no-mutation" | "awaiting-approval";
   note: string;
@@ -114,6 +135,12 @@ export async function evolveEcosystem(
   let championScore: number | null = null;
   let sinceImprovement = 0;
 
+  // The champion's assessment is carried rather than recomputed. A champion that
+  // survives a generation is the same immutable version it was, measured against
+  // the same tasks with seeds derived from its own hash — re-running the suite
+  // would spend real money to reproduce a number already held.
+  let championAssessment: GenerationAssessment | undefined;
+
   for (let generation = 0; generation < maxGenerations; generation++) {
     const outcome = await runGeneration(deps, options, {
       generation,
@@ -136,27 +163,70 @@ export async function evolveEcosystem(
       note: outcome.result.stoppedBecause,
     };
 
+    // Assess the version this generation actually ran, whatever its fate. The
+    // measurement belongs to the version, so it stays valid if this candidate
+    // becomes the champion and is compared against later generations.
+    let assessment: GenerationAssessment | undefined;
+    if (deps.assessor) {
+      assessment = await deps.assessor.assess({
+        ecosystemId: options.ecosystemId,
+        genomeVersionId: currentVersionId,
+        genome: currentGenome,
+        label: `generation ${generation + 1}`,
+      });
+      // Assessment is real spend and must bind against the evolution budget,
+      // otherwise a suite-based assessor silently doubles what a run costs.
+      totalCostUsd += assessment.costUsd;
+      record.assessment = {
+        score: assessment.score,
+        tasks: assessment.perTask?.length ?? 0,
+        verdict: "baseline",
+      };
+    }
+
     // Generation 0 establishes the baseline; there is nothing to compare to yet.
     if (generation === 0) {
       championScore = score;
       championVersionId = currentVersionId;
       championGenome = currentGenome;
+      championAssessment = assessment;
     } else {
-      const improved =
-        score !== null && (championScore === null || score >= championScore + minImprovement);
+      // Two promotion rules. Without an assessor, the historical comparison of
+      // the Watcher's score against a fixed epsilon. With one, the assessor's
+      // own judgement over its own measurements — which is what lets a caller
+      // demand statistical evidence instead of a threshold nobody could
+      // calibrate in advance.
+      const verdict =
+        deps.assessor && championAssessment && assessment
+          ? deps.assessor.compare(championAssessment, assessment)
+          : {
+              promote:
+                score !== null &&
+                (championScore === null || score >= championScore + minImprovement),
+              reason:
+                score === null
+                  ? "no score produced; champion retained"
+                  : `scored ${score.toFixed(3)} against champion ${championScore?.toFixed(3) ?? "n/a"}`,
+            };
 
-      if (improved) {
+      if (record.assessment) record.assessment.verdict = verdict.reason;
+
+      if (verdict.promote) {
         championScore = score;
         championVersionId = currentVersionId;
         championGenome = currentGenome;
+        championAssessment = assessment ?? championAssessment;
         sinceImprovement = 0;
         record.outcome = "promoted";
-        record.note = `improved to ${score!.toFixed(3)}`;
+        record.note = deps.assessor
+          ? verdict.reason
+          : `improved to ${score!.toFixed(3)}`;
       } else {
         sinceImprovement += 1;
         record.outcome = "rejected-regression";
-        record.note =
-          score === null
+        record.note = deps.assessor
+          ? `${verdict.reason}; champion retained`
+          : score === null
             ? "no score produced; champion retained"
             : `scored ${score.toFixed(3)} against champion ${championScore?.toFixed(3) ?? "n/a"}; champion retained`;
 
@@ -361,10 +431,17 @@ async function recordGenerationLesson(
     },
     [
       {
+        // When an assessor decided the outcome, its account is what the lesson
+        // must carry. A lesson citing the Watcher's score for a decision the
+        // Watcher did not make would send the next mutation after the wrong
+        // signal — and this record is read by the mutation engine, not a human
+        // who could notice the mismatch.
         content:
           `Generation ${record.generation + 1} on ${genome.problemClass}: ` +
           `${record.mutation?.summary ?? "no structural change"} — ${verdict} ` +
-          `(score ${record.score?.toFixed(3) ?? "n/a"}).`,
+          (record.assessment
+            ? `(${record.assessment.verdict}).`
+            : `(score ${record.score?.toFixed(3) ?? "n/a"}).`),
         type: "STRUCTURAL_LEARNING",
         problemClass: genome.problemClass,
         importance: record.outcome === "promoted" ? 0.9 : 0.8,

@@ -371,3 +371,142 @@ describe("evolveEcosystem", () => {
     expect(ra.stoppedBecause).toBe(rb.stoppedBecause);
   });
 });
+
+/**
+ * The assessor seam.
+ *
+ * These exercise the wiring, not the statistics — a fake assessor keeps the
+ * evolution package's tests free of any dependency on `@meta/bench`, and the
+ * bootstrap that a real assessor uses is tested where it lives, in
+ * `packages/bench/test/significance.test.ts`.
+ */
+function fakeAssessor(script: {
+  /** Per-task scores handed out one array per `assess` call. */
+  perCall: number[][];
+  promote?: boolean;
+  costUsd?: number;
+}) {
+  const calls: string[] = [];
+  let index = 0;
+
+  return {
+    calls,
+    assessor: {
+      async assess(input: { label: string; genomeVersionId: string }) {
+        calls.push(input.genomeVersionId);
+        const scores = script.perCall[Math.min(index++, script.perCall.length - 1)] ?? [];
+        return {
+          score: scores.length === 0 ? null : scores.reduce((a, b) => a + b, 0) / scores.length,
+          perTask: scores.map((score, i) => ({ taskId: `t${i}`, score })),
+          costUsd: script.costUsd ?? 0,
+          label: input.label,
+        };
+      },
+      compare() {
+        return {
+          promote: script.promote ?? false,
+          reason: script.promote ? "candidate better" : "indistinguishable from no difference",
+        };
+      },
+    },
+  };
+}
+
+describe("evolveEcosystem with a generation assessor", () => {
+  it("promotes on the assessor's verdict", async () => {
+    const t = await seed();
+    const fake = fakeAssessor({ perCall: [[0.4, 0.4], [0.9, 0.9]], promote: true });
+
+    const result = await evolveEcosystem(
+      { ...deps(t.ids, scriptedWatcher(new SimulatorProvider(), [0.5, 0.5])), assessor: fake.assessor },
+      {
+        ecosystemId: t.ecosystemId,
+        fromVersionId: t.version.id,
+        genome: t.genome,
+        objective: "obj",
+        seed: "assessor-promote",
+        maxGenerations: 2,
+      },
+    );
+
+    expect(result.generations[1]?.outcome).toBe("promoted");
+    expect(result.championVersionId).not.toBe(t.version.id);
+    expect(result.generations[1]?.assessment?.verdict).toBe("candidate better");
+  });
+
+  it("rejects what the epsilon rule would have promoted", async () => {
+    const t = await seed();
+    // The Watcher score jumps 0.5 -> 0.9, which the default rule promotes on.
+    // The assessor sees the per-task evidence and declines. This is the whole
+    // point of the seam: one objective improving is not evidence.
+    const fake = fakeAssessor({ perCall: [[0.5, 0.5], [0.55, 0.45]], promote: false });
+
+    const result = await evolveEcosystem(
+      { ...deps(t.ids, scriptedWatcher(new SimulatorProvider(), [0.5, 0.9, 0.9])), assessor: fake.assessor },
+      {
+        ecosystemId: t.ecosystemId,
+        fromVersionId: t.version.id,
+        genome: t.genome,
+        objective: "obj",
+        seed: "assessor-reject",
+        maxGenerations: 2,
+        patience: 1,
+      },
+    );
+
+    expect(result.generations[1]?.outcome).toBe("rejected-regression");
+    expect(result.championVersionId).toBe(t.version.id);
+    expect(result.generations[1]?.note).toContain("indistinguishable");
+
+    // The rejected version is still in the lineage — it was really tried.
+    const versions = await genomes.listGenomeVersions(sql, t.ecosystemId);
+    expect(versions.length).toBeGreaterThan(1);
+  });
+
+  it("assesses each version once and never re-measures the champion", async () => {
+    const t = await seed();
+    const fake = fakeAssessor({ perCall: [[0.4], [0.5], [0.6]], promote: false });
+
+    await evolveEcosystem(
+      { ...deps(t.ids, scriptedWatcher(new SimulatorProvider(), [0.4, 0.4, 0.4])), assessor: fake.assessor },
+      {
+        ecosystemId: t.ecosystemId,
+        fromVersionId: t.version.id,
+        genome: t.genome,
+        objective: "obj",
+        seed: "assessor-once",
+        maxGenerations: 2,
+        patience: 5,
+      },
+    );
+
+    // Two generations, two assessments: the baseline and the one candidate. A
+    // champion carried forward must not be paid for twice.
+    expect(fake.calls.length).toBe(2);
+    expect(new Set(fake.calls).size).toBe(2);
+  });
+
+  it("charges assessment spend against the evolution budget", async () => {
+    const t = await seed();
+    const fake = fakeAssessor({ perCall: [[0.4]], promote: false, costUsd: 5 });
+
+    const result = await evolveEcosystem(
+      { ...deps(t.ids, scriptedWatcher(new SimulatorProvider(), [0.4, 0.4])), assessor: fake.assessor },
+      {
+        ecosystemId: t.ecosystemId,
+        fromVersionId: t.version.id,
+        genome: t.genome,
+        objective: "obj",
+        seed: "assessor-budget",
+        maxGenerations: 3,
+        maxCostUsd: 4,
+      },
+    );
+
+    // The baseline assessment alone exceeds the budget, so the loop stops after
+    // generation 1 rather than treating assessment as free.
+    expect(result.totalCostUsd).toBeGreaterThanOrEqual(5);
+    expect(result.stoppedBecause).toBe("reached evolution budget");
+    expect(result.generations.length).toBe(1);
+  });
+});

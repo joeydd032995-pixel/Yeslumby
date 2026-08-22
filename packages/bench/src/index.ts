@@ -22,4 +22,16 @@ export {
   type Comparison,
 } from "./harness.js";
 
+export {
+  bootstrapPairedDelta,
+  describePairedDelta,
+  type PairedDelta,
+  type PairedDeltaOptions,
+} from "./significance.js";
+
+export {
+  createBenchmarkAssessor,
+  type BenchmarkAssessorOptions,
+} from "./assessor.js";
+
 export { STANDARD_SUITE, SMOKE_SUITE } from "./suites.js";

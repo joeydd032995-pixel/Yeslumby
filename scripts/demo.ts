@@ -4,25 +4,27 @@
  * Runs the full loop against a real Postgres+pgvector database and the
  * deterministic model provider: recommend an architecture, execute a round,
  * evaluate the organization, mutate it into a new immutable version, benchmark
- * the two versions against each other, then breed a third from two parents and
- * promote the winner.
+ * the two versions against each other, breed a third from two parents and
+ * promote the winner, then evolve under a promotion rule that has to show its
+ * evidence.
  *
  *   pnpm db:up && pnpm demo
  */
 import { createSql, migrate, genomes, runs, tenancy, telemetry } from "@meta/db";
 import { Gateway, SimulatorProvider } from "@meta/gateway";
-import { hashGenome, exportArtifact, loadTemplate } from "@meta/genome";
+import { hashGenome, exportArtifact, loadTemplate, parseGenome } from "@meta/genome";
 import { DeterministicEmbedder, consolidateKnowledge, createKnowledgeRecall } from "@meta/memory";
 import { executeRound, type RunContext } from "@meta/runtime";
 import {
   crossover,
+  evolveEcosystem,
   materializeChild,
   proposeAndApplyMutation,
   promoteVersion,
   recommendGenome,
   describeDiff,
 } from "@meta/evolution";
-import { STANDARD_SUITE, compareGenomes } from "@meta/bench";
+import { STANDARD_SUITE, compareGenomes, createBenchmarkAssessor } from "@meta/bench";
 import { DeterministicIds, FixedClock, randomIds } from "@meta/shared";
 
 const OBJECTIVE =
@@ -374,8 +376,92 @@ async function main(): Promise<void> {
       }
     }
 
-    // --- 8. Lineage and memory ----------------------------------------------
-    heading("8. Evolutionary state");
+    // --- 8. Evolve under a statistical promotion rule ------------------------
+    //
+    // The default rule promotes when the Watcher's score for one run beats the
+    // champion's by a fixed epsilon: one objective, one number, no way to ask
+    // whether the difference is bigger than the noise. Supplying an assessor
+    // replaces that with a benchmark suite and a paired bootstrap over per-task
+    // differences, so a generation is promoted on evidence and "we cannot tell"
+    // becomes an answer the loop is able to give.
+    heading("8. Evolve with promotion gated on evidence");
+
+    // Unattended evolution is only possible where the genome's own policy
+    // permits it — the recommended template requires a human to approve a
+    // Watcher mutation, and the loop halts at that gate rather than bypassing
+    // it. So this section runs against an explicitly relaxed variant, which is
+    // its own demonstration: the gate is a property of the genome, not a flag
+    // on the runtime.
+    const unattended = parseGenome({
+      ...genome,
+      mutationPolicy: {
+        ...genome.mutationPolicy,
+        humanApprovalRequired: false,
+        // Everything except the two privilege-bearing types. Those can widen
+        // what the organization is permitted to do, and a genome allowing them
+        // unattended does not validate at all — the constraint is structural.
+        allowed: [
+          "ADD_AGENT",
+          "REMOVE_AGENT",
+          "UPDATE_PROMPT",
+          "UPDATE_MODEL",
+          "ADD_EDGE",
+          "REMOVE_EDGE",
+          "CHANGE_PROTOCOL",
+          "CHANGE_MEMORY_POLICY",
+          "CHANGE_STOP_CRITERIA",
+        ],
+        maxMutationsPerRun: 4,
+      },
+    });
+    const { version: unattendedVersion } = await genomes.createGenomeVersion(sql, {
+      id: ids.next("genomeVersion"),
+      ecosystemId,
+      genome: unattended,
+      parentIds: [v1.id],
+      origin: "MANUAL",
+      createdBy: userId,
+    });
+
+    const assessor = createBenchmarkAssessor({
+      deps: { sql, gateway, clock, ids, attribution: { orgId, workspaceId } },
+      suite: STANDARD_SUITE,
+      seed: "demo-assessor",
+    });
+
+    const evolution = await evolveEcosystem(
+      { sql, gateway, clock, ids, embedder, assessor },
+      {
+        ecosystemId,
+        fromVersionId: unattendedVersion.id,
+        genome: unattended,
+        objective: OBJECTIVE,
+        seed: "demo-evolve",
+        maxGenerations: 3,
+        createdBy: userId,
+        attribution: { orgId, workspaceId },
+      },
+    );
+
+    console.log(`${STANDARD_SUITE.tasks.length} tasks per assessment, paired by task\n`);
+    for (const gen of evolution.generations) {
+      const verdict = gen.assessment?.verdict ?? gen.note;
+      const mark =
+        gen.outcome === "promoted" ? green("promoted") :
+        gen.outcome === "rejected-regression" ? yellow("retained champion") :
+        dim(gen.outcome);
+      console.log(
+        `  gen ${gen.generation + 1}  v${String(gen.version).padEnd(3)} ` +
+          `${mark.padEnd(26)} ${dim(verdict)}`,
+      );
+    }
+    console.log(`\n  stopped   ${evolution.stoppedBecause}`);
+    console.log(
+      `  ${dim("an interval containing zero means the suite cannot distinguish the two")}`,
+    );
+
+    // --- 9. Lineage and memory ----------------------------------------------
+    heading("9. Evolutionary state");
     const allVersions = await genomes.listGenomeVersions(sql, ecosystemId);
     console.log(`versions        ${allVersions.length}`);
     for (const version of allVersions) {
