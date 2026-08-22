@@ -348,6 +348,39 @@ describe("evolveEcosystem", () => {
     expect(rows.some((r) => r.content.includes("Generation 2"))).toBe(true);
   });
 
+  it("names the structural change that produced the generation", async () => {
+    // The lesson exists so the mutation engine can learn which structures work
+    // for which problems. A lesson that records only the verdict, and says "no
+    // structural change" about a generation a mutation demonstrably produced,
+    // cannot serve that purpose — it is an outcome with no subject.
+    const t = await seed();
+    const simulator = scriptedWatcher(new SimulatorProvider(), [0.4, 0.7, 0.7]);
+
+    const result = await evolveEcosystem(deps(t.ids, simulator), {
+      ecosystemId: t.ecosystemId,
+      fromVersionId: t.version.id,
+      genome: t.genome,
+      objective: "obj",
+      seed: "lesson-names-change",
+      maxGenerations: 2,
+    });
+
+    // Generation 1 really was produced by a mutation, recorded on generation 0.
+    const producedByMutation = result.generations[0]?.mutation;
+    expect(producedByMutation).toBeDefined();
+    expect(producedByMutation!.summary).toContain("changed");
+
+    const [lesson] = await sql<{ content: string }[]>`
+      SELECT content FROM memories
+      WHERE ecosystem_id = ${t.ecosystemId}
+        AND scope = 'evolutionary' AND type = 'STRUCTURAL_LEARNING'
+        AND content LIKE 'Generation 2%'
+    `;
+    expect(lesson).toBeDefined();
+    expect(lesson!.content).not.toContain("no structural change");
+    expect(lesson!.content).toContain(producedByMutation!.summary);
+  });
+
   it("is reproducible for the same seed", async () => {
     const a = await seed();
     const b = await seed();
