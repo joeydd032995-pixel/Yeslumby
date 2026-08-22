@@ -60,8 +60,29 @@ export interface GenerationRecord {
   /** Watcher score for the best iteration of this generation's run. */
   score: number | null;
   costUsd: number;
-  /** Set from generation 2 onward. */
+  /**
+   * The mutation this generation produced *for the next one*, set once that
+   * mutation has been applied — so it is absent on the final generation.
+   *
+   * Note the direction, which is the opposite of {@link producedBy} and is the
+   * distinction that matters when reading a generation's record: this is the
+   * change leaving, not the change that arrived.
+   */
   mutation?: {
+    mutationId: string;
+    patches: number;
+    summary: string;
+  };
+  /**
+   * The mutation that produced *this* generation's genome — the previous
+   * generation's outgoing `mutation`, carried forward.
+   *
+   * Absent on generation 1, which runs the seed genome and was produced by
+   * nothing. This is the field that answers "what structural change am I
+   * looking at the consequences of", and it is what the structural lesson
+   * records.
+   */
+  producedBy?: {
     mutationId: string;
     patches: number;
     summary: string;
@@ -141,6 +162,12 @@ export async function evolveEcosystem(
   // would spend real money to reproduce a number already held.
   let championAssessment: GenerationAssessment | undefined;
 
+  // The mutation that produced the genome the *next* iteration will run. Carried
+  // across iterations because a generation's record cannot describe the change
+  // that produced it from its own iteration — that mutation was applied at the
+  // end of the previous one.
+  let producedBy: GenerationRecord["mutation"];
+
   for (let generation = 0; generation < maxGenerations; generation++) {
     const outcome = await runGeneration(deps, options, {
       generation,
@@ -161,6 +188,7 @@ export async function evolveEcosystem(
       costUsd: outcome.result.totalCostUsd,
       outcome: generation === 0 ? "seed" : "promoted",
       note: outcome.result.stoppedBecause,
+      ...(producedBy ? { producedBy } : {}),
     };
 
     // Assess the version this generation actually ran, whatever its fate. The
@@ -322,6 +350,9 @@ export async function evolveEcosystem(
       patches: patches.length,
       summary: describeDiff(mutation.diff),
     };
+    // Hand it to the next iteration, which is the generation this mutation
+    // actually produces and the only one whose lesson can honestly cite it.
+    producedBy = record.mutation;
 
     currentGenome = mutation.genome;
     currentVersionId = mutation.versionId;
@@ -438,7 +469,13 @@ async function recordGenerationLesson(
         // who could notice the mismatch.
         content:
           `Generation ${record.generation + 1} on ${genome.problemClass}: ` +
-          `${record.mutation?.summary ?? "no structural change"} — ${verdict} ` +
+          // `producedBy`, not `mutation`. The lesson is about the consequences
+          // of the change that produced this generation; `mutation` is the
+          // change leaving for the next one and is not even assigned yet when
+          // this runs. Reading it here recorded every lesson as "no structural
+          // change" — an outcome with no subject, in the store whose whole
+          // purpose is remembering which structures work.
+          `${record.producedBy?.summary ?? "no structural change"} — ${verdict} ` +
           (record.assessment
             ? `(${record.assessment.verdict}).`
             : `(score ${record.score?.toFixed(3) ?? "n/a"}).`),
