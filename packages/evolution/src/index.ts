@@ -17,6 +17,13 @@ export {
 } from "./evolve.js";
 
 export {
+  type GenerationAssessor,
+  type GenerationAssessment,
+  type PromotionVerdict,
+  type AssessInput,
+} from "./assess.js";
+
+export {
   crossover,
   repair,
   type CrossoverStrategy,
