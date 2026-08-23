@@ -1,79 +1,82 @@
 import { describe, it, expect } from "vitest";
 import { scoreDisagreement } from "../src/scoring.js";
-import type { ClaimSeverity } from "@meta/runtime";
+import { computeDisagreement, FATAL_DISAGREEMENT_FLOOR } from "@meta/runtime";
 
 /**
  * `disagreementPreserved` is 20% of the default score, and since the assessor
- * landed that score decides which architecture gets promoted. These cases are
- * the specification for what it rewards.
- *
- * The dimension is deliberately two-sided: it penalizes erasing disagreement
- * that happened *and* manufacturing disagreement that did not. Rows 1-2 below
- * are the discrimination this was changed to add; rows 3-4 exist to prove the
- * two-sidedness survived the change.
+ * landed that score decides which architecture gets promoted. These cases pin
+ * down what it rewards — and, in the last block, why it deliberately still
+ * ignores the severity that contested claims now carry.
  */
 
-const contested = (...severities: ClaimSeverity[]) => severities.map((severity) => ({ severity }));
-
 describe("scoreDisagreement", () => {
-  it("rewards surfacing a fatal disagreement that actually occurred", () => {
-    // Measured 0.75 is what computeDisagreement reports once any objection is
-    // fatal. A synthesis that contests one claim and rates it fatal has
-    // preserved exactly what happened, even though it is one claim among ten.
-    expect(scoreDisagreement(0.75, contested("fatal"), 9)).toBeCloseTo(1, 3);
+  it("rewards a report proportional to the disagreement that occurred", () => {
+    // Measured 0.5 against 1 contested of 2 total: exactly proportional.
+    expect(scoreDisagreement(0.5, 1, 1)).toBeCloseTo(1, 5);
   });
 
-  it("penalizes reporting a fatal disagreement as a minor one", () => {
-    // Same count of contested claims as the case above — identical under the
-    // old count-based ratio, which is the gap this closes.
-    expect(scoreDisagreement(0.75, contested("minor"), 9)).toBeCloseTo(0.303, 3);
+  it("penalizes flattening real disagreement away", () => {
+    expect(scoreDisagreement(0.75, 0, 9)).toBeCloseTo(0.25, 5);
   });
 
-  it("distinguishes severities that the old count-based ratio could not", () => {
-    const fatal = scoreDisagreement(0.75, contested("fatal"), 9);
-    const substantive = scoreDisagreement(0.75, contested("substantive"), 9);
-    const minor = scoreDisagreement(0.75, contested("minor"), 9);
-
-    // One contested claim in every case. Only the rating differs.
-    expect(fatal).toBeGreaterThan(substantive);
-    expect(substantive).toBeGreaterThan(minor);
+  it("penalizes manufacturing disagreement that did not occur", () => {
+    // Everything contested, nothing settled, against a near-unanimous round.
+    expect(scoreDisagreement(0.1, 5, 0)).toBeCloseTo(0.1, 5);
   });
 
-  it("penalizes manufacturing severity that did not occur", () => {
-    // Measured disagreement is low, so rating a claim fatal overstates it.
-    expect(scoreDisagreement(0.2, contested("fatal"), 9)).toBeCloseTo(0.45, 3);
-  });
-
-  it("rewards a proportionate report of mild disagreement", () => {
-    expect(scoreDisagreement(0.2, contested("minor"), 9)).toBeCloseTo(0.853, 3);
-  });
-
-  it("still penalizes flattening disagreement away entirely", () => {
-    // No contested claims at all against measured 0.75. This case is unchanged
-    // by the severity work and must stay that way.
-    expect(scoreDisagreement(0.75, [], 9)).toBeCloseTo(0.25, 3);
-  });
-
-  it("heavily penalizes contesting everything when nothing was contested", () => {
-    expect(scoreDisagreement(0.1, contested("fatal", "fatal", "fatal"), 0)).toBeCloseTo(0.1, 3);
-  });
-
-  it("treats a synthesis with nothing in it as agreement", () => {
-    // No claims and no contested items: only defensible when the challenge
-    // stage also found nothing to disagree about.
-    expect(scoreDisagreement(0.1, [], 0)).toBe(1);
-    expect(scoreDisagreement(0.9, [], 0)).toBe(0);
+  it("treats a synthesis with nothing in it as agreement only when the round agreed", () => {
+    expect(scoreDisagreement(0.1, 0, 0)).toBe(1);
+    expect(scoreDisagreement(0.9, 0, 0)).toBe(0);
   });
 
   it("is bounded to [0,1]", () => {
     for (const measured of [0, 0.25, 0.5, 0.75, 1]) {
-      for (const claims of [0, 1, 5, 40]) {
-        for (const severity of ["minor", "substantive", "fatal"] as ClaimSeverity[]) {
-          const score = scoreDisagreement(measured, contested(severity), claims);
+      for (const contested of [0, 1, 5, 40]) {
+        for (const claims of [0, 1, 5, 40]) {
+          const score = scoreDisagreement(measured, contested, claims);
           expect(score).toBeGreaterThanOrEqual(0);
           expect(score).toBeLessThanOrEqual(1);
         }
       }
     }
+  });
+});
+
+/**
+ * Severity-weighting the reported side was implemented, reviewed, and reverted.
+ * These record the two failures concretely, because the next person to look at
+ * the count-based ratio will have the same idea and deserves to know how it
+ * went rather than rediscovering it in a promotion decision.
+ */
+describe("why the reported side is not severity-weighted", () => {
+  const challenge = (agreementScore: number, severity: "minor" | "substantive" | "fatal") => ({
+    targetAgentId: "a",
+    agreementScore,
+    concessions: [],
+    objections: [{ targetClaimId: "c", objection: "o", severity, reasoning: "r" }],
+  });
+
+  it("measures a lone fatal objection as small once averaged over many challenges", () => {
+    // The measured side floors the *one* fatal challenge, then divides by ten.
+    // Any reported figure floored at 0.75 for the synthesis as a whole is being
+    // compared against this — which is what produced an inverted score.
+    const measured = computeDisagreement([
+      challenge(1, "fatal"),
+      ...Array.from({ length: 9 }, () => challenge(1, "minor")),
+    ]);
+
+    expect(measured).toBeCloseTo(FATAL_DISAGREEMENT_FLOOR / 10, 5);
+    expect(measured).toBeLessThan(0.1);
+  });
+
+  it("distinguishes fatal from not, and nothing else", () => {
+    // minor and substantive both fall through to agreementScore, so weighting
+    // them apart on the reported side alone is a lever with no counterweight.
+    const minor = computeDisagreement([challenge(0.8, "minor")]);
+    const substantive = computeDisagreement([challenge(0.8, "substantive")]);
+    const fatal = computeDisagreement([challenge(0.8, "fatal")]);
+
+    expect(minor).toBe(substantive);
+    expect(fatal).toBeGreaterThan(substantive);
   });
 });

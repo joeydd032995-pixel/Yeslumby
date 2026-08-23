@@ -39,12 +39,18 @@ describe("ClaimSeverity", () => {
 });
 
 describe("ContestedClaimSchema.severity", () => {
-  it("defaults so synthesis recorded before the field existed still parses", () => {
-    // The step journal replays stored stage output. A run recorded before this
-    // field was added must resume rather than fail to parse — which is why this
-    // schema defaults where the live call contract requires.
+  it("defaults to the neutral middle when absent", () => {
     const parsed = ContestedClaimSchema.parse(contested);
     expect(parsed.severity).toBe("substantive");
+  });
+
+  it("does not protect the journal replay path, which never parses", () => {
+    // Worth pinning down, because the default looks like it makes replay safe
+    // and does not: durableStep returns `claim.step.output as T`. A synthesis
+    // recorded before this field existed replays with severity absent, whatever
+    // the type says — so a reader of this field must tolerate undefined.
+    const replayed = structuredClone(contested) as { severity?: string };
+    expect(replayed.severity).toBeUndefined();
   });
 
   it("keeps an explicit severity", () => {
