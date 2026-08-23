@@ -99,8 +99,18 @@ export class Gateway implements ModelGateway {
           }
 
           // Priced against the model that actually served, so a fallback to a
-          // cheaper model shows up honestly in cost telemetry.
-          const { costUsd, unpriced } = computeCost(modelId, result.usage);
+          // cheaper model shows up honestly in cost telemetry. A provider that
+          // reports its own per-call cost (e.g. OpenRouter's usage accounting)
+          // is a real measurement, not a modelled estimate, so it overrides the
+          // static table outright — the same relationship latencyMs already
+          // has with wall-clock timing above. No cross-check against the
+          // static table: the two are allowed to legitimately diverge (routing
+          // fees, list-price drift), and nothing downstream consumes a
+          // discrepancy signal.
+          const { costUsd, unpriced } =
+            result.costUsd !== undefined
+              ? { costUsd: result.costUsd, unpriced: false }
+              : computeCost(modelId, result.usage);
 
           // Telemetry failure must never re-run a paid call. Left inside the
           // try block, a transient outage in the usage store would be caught by

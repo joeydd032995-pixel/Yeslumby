@@ -21,9 +21,9 @@
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createSql, genomes, runs, type Sql } from "@meta/db";
-import { Gateway, SimulatorProvider, AiGatewayProvider, hasGatewayCredentials } from "@meta/gateway";
+import { resolveGateway, isDeterministic } from "@meta/gateway";
 import { loadTemplate, type ArchitectureGenome } from "@meta/genome";
-import { DeterministicEmbedder, GatewayEmbedder } from "@meta/memory";
+import { resolveEmbedder } from "@meta/memory";
 import { runEcosystem, type RunContext } from "@meta/runtime";
 import { evolveEcosystem } from "@meta/evolution";
 import { scoreRound, weightedScore, DEFAULT_DIMENSIONS } from "@meta/bench";
@@ -36,21 +36,22 @@ import {
 
 const ROOT = "artifacts/validation";
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://postgres@127.0.0.1:5433/meta_ecosystem";
-const REAL = hasGatewayCredentials();
+const REAL = !isDeterministic();
 
 function provider() {
-  return REAL
-    ? new Gateway({ providers: [new AiGatewayProvider(), new SimulatorProvider()], clock: systemClock })
-    : new Gateway({ providers: [new SimulatorProvider()], clock: systemClock, sleep: async () => {} });
+  return resolveGateway({
+    clock: systemClock,
+    ...(REAL ? {} : { sleep: async () => {} }),
+  });
 }
 
 function banner(experiment: string) {
   console.log(`\n${experiment}`);
   console.log(
     REAL
-      ? "provider: AI Gateway (real models) — results are evidence"
+      ? "provider: hosted gateway (real models) — results are evidence"
       : "provider: deterministic simulator — results describe a random number\n" +
-        "generator, not the product. Set AI_GATEWAY_API_KEY for a real answer.",
+        "generator, not the product. Set OPENROUTER_API_KEY or AI_GATEWAY_API_KEY for a real answer.",
   );
 }
 
@@ -230,7 +231,7 @@ async function evolutionRun(generations: number, dryRun: boolean) {
     console.log(`\nevolving ${generations} generations on the TRAINING set...`);
     const evolution = await evolveEcosystem(
       { sql, gateway: provider(), clock: systemClock, ids: randomIds,
-        embedder: REAL ? new GatewayEmbedder() : new DeterministicEmbedder() },
+        embedder: resolveEmbedder() },
       { ecosystemId, fromVersionId: versionId, genome,
         objective: TRAINING[0]!.objective, seed: "val-evolution",
         maxGenerations: generations, attribution: { orgId, workspaceId: "ws_val" } },

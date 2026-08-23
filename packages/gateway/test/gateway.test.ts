@@ -112,6 +112,38 @@ describe("cost accounting", () => {
     expect(result.text.length).toBeGreaterThan(0);
   });
 
+  it("prefers a provider-reported cost over the static table", async () => {
+    const reporting: ModelProvider = {
+      name: "reporting",
+      supports: () => true,
+      generate: async () => ({
+        text: "answer",
+        usage: { inputTokens: 10, outputTokens: 10 },
+        finishReason: "stop",
+        costUsd: 0.0042,
+      }),
+    };
+
+    const result = await makeGateway(reporting).generate({
+      ...baseRequest,
+      modelId: "anthropic/claude-opus-4", // has a MODEL_PRICING entry that would price differently
+    });
+
+    expect(result.costUsd).toBe(0.0042);
+    expect(result.unpriced).toBe(false);
+  });
+
+  it("falls back to the static table when the provider reports no cost", async () => {
+    const result = await makeGateway(new SimulatorProvider()).generate({
+      ...baseRequest,
+      modelId: "anthropic/claude-opus-4",
+    });
+
+    // SimulatorProvider never sets costUsd, so this exercises the static-table path.
+    expect(result.unpriced).toBe(false);
+    expect(result.costUsd).toBeGreaterThan(0);
+  });
+
   it("emits one usage record per successful call, with attribution", async () => {
     const records: unknown[] = [];
     const sink: UsageSink = { record: (e) => void records.push(e) };

@@ -1,5 +1,5 @@
-import { Gateway, SimulatorProvider, AiGatewayProvider, hasGatewayCredentials } from "@meta/gateway";
-import { DeterministicEmbedder, GatewayEmbedder, type EmbeddingProvider } from "@meta/memory";
+import { resolveGateway, isDeterministic as gatewayIsDeterministic } from "@meta/gateway";
+import { resolveEmbedder, type EmbeddingProvider } from "@meta/memory";
 import { randomIds, systemClock } from "@meta/shared";
 import { telemetry } from "@meta/db";
 import { db } from "./db.js";
@@ -7,17 +7,13 @@ import { db } from "./db.js";
 /**
  * Model access for the app.
  *
- * Hosted inference when credentials exist, the deterministic provider
- * otherwise, with usage recorded to `usage_events` either way so the cost
- * displayed in the UI is measured rather than estimated.
+ * Hosted inference when credentials exist (OpenRouter or Vercel AI Gateway —
+ * see resolveGateway's precedence when both are set), the deterministic
+ * provider otherwise, with usage recorded to `usage_events` either way so the
+ * cost displayed in the UI is measured rather than estimated.
  */
 export function gateway() {
-  const providers = hasGatewayCredentials()
-    ? [new AiGatewayProvider(), new SimulatorProvider()]
-    : [new SimulatorProvider()];
-
-  return new Gateway({
-    providers,
+  return resolveGateway({
     clock: systemClock,
     usageSink: {
       record: (event) =>
@@ -39,10 +35,10 @@ export function gateway() {
 }
 
 export function embedder(): EmbeddingProvider {
-  return hasGatewayCredentials() ? new GatewayEmbedder() : new DeterministicEmbedder();
+  return resolveEmbedder();
 }
 
 /** True when this process serves model calls deterministically. */
 export function isDeterministic(): boolean {
-  return !hasGatewayCredentials();
+  return gatewayIsDeterministic();
 }

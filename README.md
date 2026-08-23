@@ -128,7 +128,7 @@ apps/web              Next.js surface (planned)
 packages/shared       canonical JSON, hashing, seeded RNG, clock, cost model
 packages/genome       Zod schema, invariants, patches, content addressing
 packages/db           schema, migrations, repositories
-packages/gateway      ModelGateway port, deterministic + AI Gateway providers
+packages/gateway      ModelGateway port, deterministic + AI Gateway + OpenRouter providers
 packages/runtime      step journal, state machine, stage executors, prompt assembly
 packages/memory       embeddings, three-way stores, consolidation
 packages/evolution    mutation engine, breeding, forking, recommendation
@@ -149,8 +149,13 @@ reports usage against the *requested* model — a genome of Opus agents and one 
 Haiku agents produce different simulated costs, keeping score-per-dollar
 meaningful with no real spend.
 
-Set `AI_GATEWAY_API_KEY` and hosted inference takes over automatically, behind
-the same port.
+Set `OPENROUTER_API_KEY` or `AI_GATEWAY_API_KEY` and hosted inference takes
+over automatically, behind the same port — if both are set, OpenRouter takes
+precedence. `AI_GATEWAY_BASE_URL` / `OPENROUTER_BASE_URL` override the
+respective default endpoint, and `OPENROUTER_SITE_URL` / `OPENROUTER_APP_NAME`
+add OpenRouter's optional attribution headers. Embeddings always go through
+the AI Gateway (or the deterministic embedder) regardless of which chat
+backend is active — OpenRouter has no embeddings endpoint.
 
 ### What benchmarks can honestly measure
 

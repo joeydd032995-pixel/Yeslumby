@@ -114,6 +114,12 @@ export interface ProviderResult {
    * produce reproducible timings rather than ones that vary with machine speed.
    */
   latencyMs?: number;
+  /**
+   * Provider-reported cost in USD for this call. When set, the gateway
+   * records this instead of the static MODEL_PRICING table — the same
+   * override relationship latencyMs already has with wall-clock timing.
+   */
+  costUsd?: number;
 }
 
 /** Receives a usage record for every completed call. */

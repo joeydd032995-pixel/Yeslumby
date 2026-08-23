@@ -26,6 +26,13 @@ export interface ModelPricing {
  * Published list prices, keyed by gateway model id. Unknown models are priced at
  * zero and flagged, rather than throwing — an unpriced model must never take
  * down a run, but it must be visible in telemetry.
+ *
+ * This table is a fallback for providers that don't self-report cost. A
+ * provider that does (e.g. OpenRouter's usage accounting) reports a real
+ * per-call measurement, which the gateway prefers outright — so its number
+ * may legitimately diverge from this table's list price for the same model
+ * id (routing fees, price drift). That is expected, not a bug; no
+ * reconciliation between the two is attempted.
  */
 export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = Object.freeze({
   "anthropic/claude-opus-4": { inputPerMillion: 15, outputPerMillion: 75 },
