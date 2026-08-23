@@ -158,9 +158,17 @@ Without labelled answers there is no way to score correctness, and pretending
 otherwise produces a leaderboard that rewards confident wrong answers. What *is*
 measurable from the artifacts is what this runtime claims to optimize: whether
 claims were sourced, whether disagreement that actually occurred was preserved,
-whether claims were made falsifiable, and what it cost. Tasks supplying expected
-findings add a coverage dimension, weighted alongside the rest rather than
-dominating it.
+whether claims were made falsifiable, and what it cost.
+
+Tasks supplying expected findings also produce a **coverage** figure, but the
+default scoring does not weight it — it is recorded as a diagnostic. Coverage is
+a literal keyword match over one or two terms per task, so it moves in steps of
+0.5 while real differences between architectures run around 0.05; weighting it
+would let a promotion turn on whether a single word happened to appear. It is
+also the only measure here that gestures at whether an answer was *right*, which
+is the thing this suite has no labels to judge. A suite may override the default
+dimensions and weight it anyway; `DEFAULT_DIMENSIONS` records what that would
+require first.
 
 Per-agent marginal contribution is measured by ablation — removing an agent and
 re-running. Citation counts and challenge survival are cheaper proxies, but both
