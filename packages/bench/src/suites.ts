@@ -26,9 +26,10 @@ import type { BenchmarkSuite } from "./harness.js";
  * history. Only the suite-level average moves, which is the point.
  *
  * `expectedFindings` feeds the **`coverage` diagnostic, not the score** — it is
- * deliberately outside `DEFAULT_DIMENSIONS`, for the reasons set out there. A
- * task gaining or losing an entry therefore cannot move a promotion decision,
- * which is why adding them is safe and why they are worth keeping accurate
+ * deliberately outside `DEFAULT_DIMENSIONS`, for the reasons set out there. This
+ * suite supplies no `dimensions` of its own, so it takes that default and a task
+ * gaining or losing an entry cannot move a promotion decision made against it.
+ * That is why adding them is safe, and why they are worth keeping accurate
  * anyway: they are the only read on whether an organization reached the ground
  * the question was about.
  *
