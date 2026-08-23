@@ -61,10 +61,22 @@ export const ProposalSchema = z.object({
 });
 export type Proposal = z.output<typeof ProposalSchema>;
 
+/**
+ * How much a disagreement matters.
+ *
+ * Declared once and shared by objections (the *measured* side of disagreement)
+ * and contested claims (the *reported* side). `scoreDisagreement` compares those
+ * two sides and treats `fatal` specially on both, which only means anything if
+ * the vocabularies are literally the same — hence one enum rather than two that
+ * happen to match today.
+ */
+export const ClaimSeveritySchema = z.enum(["minor", "substantive", "fatal"]);
+export type ClaimSeverity = z.output<typeof ClaimSeveritySchema>;
+
 export const ObjectionSchema = z.object({
   targetClaimId: z.string().min(1),
   objection: z.string().min(1),
-  severity: z.enum(["minor", "substantive", "fatal"]),
+  severity: ClaimSeveritySchema,
   reasoning: z.string().min(1),
 });
 
@@ -122,6 +134,17 @@ export const ContestedClaimSchema = z.object({
   whyUnresolved: z.string().min(1),
   /** What evidence would settle it. Turns a disagreement into an experiment. */
   resolvingEvidence: z.string().min(1),
+  /**
+   * How much this unresolved question matters, on the same scale objections use.
+   *
+   * Defaulted rather than required *here* because this schema also parses
+   * synthesis output replayed from the step journal, and a run recorded before
+   * this field existed must still resume. `makeSynthesisSchema` requires it, so
+   * a live call cannot quietly fall through to the default — only stored history
+   * does. "substantive" is the neutral middle, chosen so an old artifact is
+   * neither credited with nor blamed for a severity nobody recorded.
+   */
+  severity: ClaimSeveritySchema.default("substantive"),
 });
 export type ContestedClaim = z.output<typeof ContestedClaimSchema>;
 
@@ -182,6 +205,10 @@ export function makeSynthesisSchema(allowedArtifactIds: readonly string[]) {
           .min(2),
         whyUnresolved: z.string().min(1),
         resolvingEvidence: z.string().min(1),
+        // Required here, unlike on ContestedClaimSchema. This is the contract a
+        // live call is held to, so the synthesizer must state a severity rather
+        // than inherit one — the default exists only to let stored history parse.
+        severity: ClaimSeveritySchema,
       }),
     ),
     unknowns: z.array(z.string()),

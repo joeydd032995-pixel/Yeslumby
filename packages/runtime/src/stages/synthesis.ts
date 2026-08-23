@@ -35,7 +35,9 @@ Sort every conclusion by epistemic status:
 - highConfidence: survived challenge and falsification, with evidence.
 - workingHypotheses: plausible and useful, but not established.
 - contested: agents reached different positions and the evidence does not settle
-  which is right. Record every position with who held it and why.
+  which is right. Record every position with who held it and why, and rate each
+  contested item minor, substantive, or fatal — the same scale the challengers
+  used, judged by what turns on the question rather than how heated it got.
 - unknowns: questions raised that nobody could answer.
 - recommendedExperiments: what would resolve the contested items.
 

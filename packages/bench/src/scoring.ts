@@ -1,5 +1,5 @@
 import { efficiency } from "@meta/shared";
-import type { RoundResult } from "@meta/runtime";
+import { FATAL_DISAGREEMENT_FLOOR, type ClaimSeverity, type RoundResult } from "@meta/runtime";
 
 /**
  * Benchmark scoring.
@@ -121,7 +121,7 @@ export function scoreRound(result: RoundResult, task: BenchmarkTask): DimensionS
   // disagreement are penalized.
   const disagreementPreserved = scoreDisagreement(
     result.disagreementLevel,
-    synthesis.contested.length,
+    synthesis.contested,
     allClaims.length,
   );
 
@@ -157,22 +157,52 @@ export function scoreRound(result: RoundResult, task: BenchmarkTask): DimensionS
 }
 
 /**
+ * How much weight one contested claim carries toward "disagreement surfaced".
+ *
+ * A fatal objection left unresolved is not the same event as a quibble, and a
+ * synthesis that reports one of each has not reported the same thing twice.
+ */
+const SEVERITY_WEIGHT = { minor: 0.5, substantive: 1, fatal: 2 } as const;
+
+/**
  * Reward matching the disagreement that actually happened.
  *
  * A synthesis reporting nothing contested after a round of fatal objections is
  * flattening. A synthesis reporting everything contested after unanimous
  * agreement is manufacturing doubt, which is equally uninformative. The score
- * peaks when the reported proportion tracks the measured level.
+ * peaks when the reported level tracks the measured level, and it is two-sided
+ * on purpose — a one-sided rule would let a synthesis that contests everything
+ * score perfectly.
+ *
+ * Both sides are severity-aware, and deliberately in the same way. The measured
+ * level comes from `computeDisagreement`, which floors a challenge at 0.75 once
+ * any objection is fatal; the reported level applies that identical floor once
+ * any contested claim is rated fatal. Mirroring the rule is the point — the two
+ * numbers are only comparable if "fatal" means the same thing on each side.
+ *
+ * Counting contested *claims* rather than weighing them, as this did before,
+ * made surfacing a fatal objection and surfacing a quibble worth exactly the
+ * same, which is the one thing the dimension most needs to tell apart.
  */
 export function scoreDisagreement(
   disagreementLevel: number,
-  contestedCount: number,
+  contested: ReadonlyArray<{ severity: ClaimSeverity }>,
   totalClaims: number,
 ): number {
-  const denominator = contestedCount + totalClaims;
+  const weighted = contested.reduce((sum, c) => sum + SEVERITY_WEIGHT[c.severity], 0);
+
+  const denominator = weighted + totalClaims;
+  // Nothing claimed and nothing contested. Defensible only if the challenge
+  // stage also found nothing to disagree about; otherwise the synthesis is
+  // empty in the face of a real dispute.
   if (denominator === 0) return disagreementLevel < 0.2 ? 1 : 0;
-  const reportedRatio = contestedCount / denominator;
-  return clamp01(1 - Math.abs(reportedRatio - disagreementLevel));
+
+  const ratio = weighted / denominator;
+  const reported = contested.some((c) => c.severity === "fatal")
+    ? Math.max(ratio, FATAL_DISAGREEMENT_FLOOR)
+    : ratio;
+
+  return clamp01(1 - Math.abs(reported - disagreementLevel));
 }
 
 function scoreCoverage(result: RoundResult, expected: readonly string[]): number {
