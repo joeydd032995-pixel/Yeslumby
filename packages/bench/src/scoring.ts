@@ -1,4 +1,6 @@
 import { efficiency } from "@meta/shared";
+// FATAL_DISAGREEMENT_FLOOR is referenced by the reasoning on scoreDisagreement
+// rather than by its arithmetic; see there for why the score does not apply it.
 import type { RoundResult } from "@meta/runtime";
 
 /**
@@ -163,6 +165,32 @@ export function scoreRound(result: RoundResult, task: BenchmarkTask): DimensionS
  * flattening. A synthesis reporting everything contested after unanimous
  * agreement is manufacturing doubt, which is equally uninformative. The score
  * peaks when the reported proportion tracks the measured level.
+ *
+ * **Why this counts claims rather than weighing them by severity.** Contested
+ * claims now carry a severity, and weighting by it is the obvious next step. It
+ * was tried and reverted, because the two sides of this comparison are not the
+ * same kind of quantity and severity makes that mismatch bite:
+ *
+ * - The measured level is a *mean over challenges* — `computeDisagreement`
+ *   floors one challenge at {@link FATAL_DISAGREEMENT_FLOOR} when an objection
+ *   is fatal, then averages across all of them, so a single fatal objection
+ *   among ten challenges measures 0.075. Applying that same floor to the
+ *   *synthesis as a whole* produced 0.75 against a measured 0.075, and scored
+ *   correctly surfacing the fatal objection at 0.325 while scoring flattening
+ *   it away at 0.925 — an inversion of the dimension's entire purpose.
+ * - `computeDisagreement` distinguishes only fatal from non-fatal; minor and
+ *   substantive both fall through to `agreementScore`. Weighting them apart on
+ *   the reported side alone is a lever with no counterweight, and it paid:
+ *   relabelling a truthful `minor` as `substantive` improved the score.
+ *
+ * Both are fixable, but only by making the measured side severity-aware and
+ * aggregating both sides identically — which changes `computeDisagreement`, and
+ * with it `checkDisagreementPreserved`, the gate that rejects a synthesis for
+ * erasing disagreement. That is a change to how runs *behave*, not just how they
+ * are scored, and it belongs in its own change rather than riding along here.
+ *
+ * So severity is recorded on the claim and visible in artifacts, and the score
+ * does not read it yet. A coarse metric beats an inverted one.
  */
 export function scoreDisagreement(
   disagreementLevel: number,

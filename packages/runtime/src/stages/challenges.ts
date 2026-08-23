@@ -176,6 +176,18 @@ export function keepGroundedObjections(
 }
 
 /**
+ * The disagreement level a fatal objection implies regardless of what the
+ * challenger's own agreement score claimed.
+ *
+ * Exported because the *reported* side of the same comparison applies it too:
+ * `scoreDisagreement` in `@meta/bench` floors reported disagreement here when a
+ * contested claim is rated fatal. The two numbers are only comparable if "fatal"
+ * means the same thing on both sides, so they share the constant rather than
+ * each carrying a 0.75 that could drift apart.
+ */
+export const FATAL_DISAGREEMENT_FLOOR = 0.75;
+
+/**
  * How much the organization disagreed with itself.
  *
  * Mean rejection across challenges, weighted upward by fatal objections: a
@@ -188,7 +200,7 @@ export function computeDisagreement(challenges: Challenge[]): number {
   const perChallenge = challenges.map((c) => {
     const base = 1 - c.agreementScore;
     const hasFatal = c.objections.some((o) => o.severity === "fatal");
-    return hasFatal ? Math.max(base, 0.75) : base;
+    return hasFatal ? Math.max(base, FATAL_DISAGREEMENT_FLOOR) : base;
   });
 
   const mean = perChallenge.reduce((a, b) => a + b, 0) / perChallenge.length;

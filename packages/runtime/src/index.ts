@@ -27,6 +27,7 @@ export {
   FalsificationSchema,
   SynthesisSchema,
   ContestedClaimSchema,
+  ClaimSeveritySchema,
   WatcherEvaluationSchema,
   WatcherScoresSchema,
   ContextSchema,
@@ -38,6 +39,7 @@ export {
   type Falsification,
   type Synthesis,
   type ContestedClaim,
+  type ClaimSeverity,
   type WatcherEvaluation,
   type WatcherScores,
   type StageContext,
@@ -62,6 +64,7 @@ export {
 export {
   runChallenges,
   computeDisagreement,
+  FATAL_DISAGREEMENT_FLOOR,
   type ChallengeOutcome,
   type ChallengesResult,
 } from "./stages/challenges.js";
