@@ -38,7 +38,9 @@ export function ProviderBanner() {
     <div className="banner" style={{ marginBottom: 16 }}>
       <span className="dot" />
       Deterministic provider — runs are reproducible and costs are modelled from
-      published rates, not billed. Set <code>AI_GATEWAY_API_KEY</code> for hosted inference.
+      published rates, not billed. Set <code>OPENROUTER_API_KEY</code> or{" "}
+      <code>AI_GATEWAY_API_KEY</code> for hosted inference (OpenRouter takes
+      precedence if both are set).
     </div>
   );
 }
