@@ -12,9 +12,10 @@ import type { RoundResult } from "@meta/runtime";
  * it preserved disagreement it actually had, whether its claims were made
  * falsifiable, and what it cost.
  *
- * Where a task does supply expected findings, a coverage dimension is added.
- * That is a keyword proxy for accuracy and is weighted alongside the structural
- * dimensions rather than dominating them.
+ * Where a task supplies expected findings, a coverage figure is also computed —
+ * but it is deliberately **not** part of the score. See {@link DEFAULT_DIMENSIONS}
+ * for why. It is recorded as a diagnostic, and every dimension that does count
+ * measures how the organization *behaved* rather than whether it was right.
  */
 
 export interface ScoringDimension {
@@ -26,7 +27,10 @@ export interface BenchmarkTask {
   id: string;
   objective: string;
   problemClass?: string;
-  /** Optional expected findings, enabling the coverage dimension. */
+  /**
+   * Terms that ought to appear if the organization engaged with the question.
+   * Feeds the `coverage` diagnostic only — these do not affect a task's score.
+   */
   expectedFindings?: string[];
 }
 
@@ -36,9 +40,45 @@ export interface DimensionScores {
   falsifiability: number;
   structuralDepth: number;
   watcherOverall: number;
+  /**
+   * Diagnostic only — present when the task supplied `expectedFindings`, and
+   * **not** included in {@link DEFAULT_DIMENSIONS}, so it contributes nothing to
+   * `overallScore`. It is persisted alongside the scored dimensions so the
+   * question "did the organization reach the expected ground?" stays answerable
+   * without letting a keyword match decide which architecture wins.
+   */
   coverage?: number;
 }
 
+/**
+ * The dimensions that actually count.
+ *
+ * `coverage` is absent on purpose, and the omission is easy to misread as an
+ * oversight — so, concretely, why it is excluded:
+ *
+ * **It is too coarse to weight.** `scoreCoverage` returns `hits / expected.length`,
+ * and tasks carry one or two findings each — so coverage is a step function over
+ * {0, 0.5, 1}, or {0, 1} for a single-finding task. Weighted at 0.2 it would move
+ * an affected task's score by 0.083–0.167 every time one literal substring
+ * appeared or did not. Real differences between two architectures on this suite
+ * run around 0.05 across twelve tasks. The measurement would be several times
+ * coarser than the effect it is meant to inform, so a promotion decision could
+ * turn on whether one word happened to be written.
+ *
+ * **Under the deterministic provider it is close to noise.** Simulated output is
+ * generated from the stage's JSON Schema, so whether the text contains
+ * "confound" is largely arbitrary — and that provider is the path the
+ * reproducibility claim rests on.
+ *
+ * **It is the only outcome measure here.** Every dimension below scores how the
+ * organization behaved. Coverage gestures at whether it was *right*, which this
+ * suite has no labels to judge; promoting it to a weighted dimension is exactly
+ * the "leaderboard that rewards confident wrong answers" this module opens by
+ * refusing to build.
+ *
+ * Weighting it would need many more findings per task (to de-quantize it) and a
+ * real gateway (so the text means something). Both, not either.
+ */
 export const DEFAULT_DIMENSIONS: ScoringDimension[] = [
   { key: "evidenceQuality", weight: 0.25 },
   { key: "disagreementPreserved", weight: 0.2 },
@@ -135,9 +175,13 @@ function scoreCoverage(result: RoundResult, expected: readonly string[]): number
 }
 
 /**
- * Weights are renormalized over the dimensions actually present, so a suite
- * whose tasks lack expected findings is not silently penalized for the missing
- * coverage dimension.
+ * Weights are renormalized over the dimensions actually present, so a caller
+ * supplying `dimensions` that include an optional key is not silently penalized
+ * on tasks where that key is absent.
+ *
+ * Note this iterates `dimensions`, not `scores` — a value present on the scores
+ * object but missing from the dimension list contributes nothing, by design.
+ * That is how `coverage` stays a diagnostic under {@link DEFAULT_DIMENSIONS}.
  */
 export function weightedScore(
   scores: DimensionScores,

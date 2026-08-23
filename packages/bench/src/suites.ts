@@ -25,12 +25,19 @@ import type { BenchmarkSuite } from "./harness.js";
  * `-v2` would silently re-seed the original five and quietly invalidate the
  * history. Only the suite-level average moves, which is the point.
  *
- * `expectedFindings` appears only where a specific term is genuinely
- * load-bearing for the question. Coverage is scored by literal substring match,
- * so a vague entry produces a false negative and a generic one ("cost",
- * "analysis") matches any text at all and produces a false positive. Entries are
- * stems where the stem is itself a word — "confound" catches "confounding" and
- * "confounder" — and most tasks below carry none, which is the honest default.
+ * `expectedFindings` feeds the **`coverage` diagnostic, not the score** — it is
+ * deliberately outside `DEFAULT_DIMENSIONS`, for the reasons set out there. A
+ * task gaining or losing an entry therefore cannot move a promotion decision,
+ * which is why adding them is safe and why they are worth keeping accurate
+ * anyway: they are the only read on whether an organization reached the ground
+ * the question was about.
+ *
+ * Entries appear only where a specific term is genuinely load-bearing. Matching
+ * is literal substring, so a vague entry produces a false negative and a generic
+ * one ("cost", "analysis") matches any text and produces a false positive.
+ * Entries are stems where the stem is itself a word — "confound" catches
+ * "confounding" and "confounder" — and most tasks below carry none, which is the
+ * honest default.
  */
 export const STANDARD_SUITE: BenchmarkSuite = {
   id: "standard-v1",
