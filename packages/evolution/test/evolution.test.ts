@@ -14,6 +14,7 @@ import { DeterministicIds, createRng } from "@meta/shared";
 import { DeterministicEmbedder, consolidateStructural } from "@meta/memory";
 import {
   classifyObjective,
+  UNCLASSIFIED_CONFIDENCE,
   crossover,
   forkEcosystem,
   proposeAndApplyMutation,
@@ -389,6 +390,27 @@ describe("genome recommendation", () => {
   it("keeps confidence honest for an unclassifiable objective", () => {
     const c = classifyObjective("hello");
     expect(c.confidence).toBeLessThan(0.5);
+  });
+
+  it("does not claim to have classified an objective it could not classify", async () => {
+    // The rationale sits directly beside the confidence in the UI. If it says
+    // "Classified as ..." while the confidence says nothing matched, the page
+    // tells the user two opposite things.
+    const rec = await recommendGenome({ sql, embedder }, { objective: "hello" });
+
+    expect(rec.confidence).toBe(UNCLASSIFIED_CONFIDENCE);
+    expect(rec.rationale).not.toMatch(/^Classified as/);
+    expect(rec.rationale).toMatch(/matched a known problem class/);
+  });
+
+  it("reports the unclassified floor exactly, so a caller can recognise a guess", () => {
+    // The landing page branches on this to present a default as a default
+    // rather than as a recommendation. A caller cannot do that against a
+    // literal buried in the classifier, which is why the value is exported.
+    expect(classifyObjective("hello").confidence).toBe(UNCLASSIFIED_CONFIDENCE);
+    expect(classifyObjective("Does the effect replicate?").confidence).toBeGreaterThan(
+      UNCLASSIFIED_CONFIDENCE,
+    );
   });
 
   it("returns a runnable genome and named alternatives", async () => {
