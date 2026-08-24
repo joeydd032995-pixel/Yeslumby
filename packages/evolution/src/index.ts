@@ -41,6 +41,7 @@ export {
 export {
   recommendGenome,
   classifyObjective,
+  UNCLASSIFIED_CONFIDENCE,
   type Recommendation,
   type RecommendInput,
 } from "./recommend.js";

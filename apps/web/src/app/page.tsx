@@ -1,4 +1,4 @@
-import { recommendGenome, classifyObjective } from "@meta/evolution";
+import { recommendGenome, classifyObjective, UNCLASSIFIED_CONFIDENCE } from "@meta/evolution";
 import { TEMPLATES } from "@meta/genome";
 import { db } from "@/lib/db";
 import { embedder } from "@/lib/runtime";
@@ -82,10 +82,32 @@ export default async function LandingPage({
 
           {recommendation && classified && (
             <Panel
-              title="Recommended"
-              action={<Pill tone="info">confidence {recommendation.confidence}</Pill>}
+              // At the floor the classifier matched nothing — the template below
+              // is a default, not a choice made about this objective. Saying
+              // "Recommended · confidence 0.3" in the same styling as a real
+              // match presents a guess as a result.
+              title={
+                recommendation.confidence <= UNCLASSIFIED_CONFIDENCE
+                  ? "Starting point"
+                  : "Recommended"
+              }
+              action={
+                recommendation.confidence <= UNCLASSIFIED_CONFIDENCE ? (
+                  <Pill tone="warn">unclassified</Pill>
+                ) : (
+                  <Pill tone="info">confidence {recommendation.confidence}</Pill>
+                )
+              }
             >
               <div className="stack">
+                {recommendation.confidence <= UNCLASSIFIED_CONFIDENCE && (
+                  <p style={{ margin: 0, color: "var(--ink-2)" }}>
+                    Nothing in this objective matched a known problem class, so this is the
+                    general-purpose default rather than a choice made about your question.
+                    It is a reasonable place to start — and worth reading before you accept it.
+                  </p>
+                )}
+
                 <div className="row" style={{ gap: 8 }}>
                   <Pill tone="good">{recommendation.templateKey}</Pill>
                   <Pill>{recommendation.problemClass}</Pill>

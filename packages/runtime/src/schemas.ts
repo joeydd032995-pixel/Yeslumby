@@ -185,18 +185,29 @@ export type Synthesis = z.output<typeof SynthesisSchema>;
  * The synthesis contract for one specific call, with citations restricted to
  * the artifacts that call was actually shown.
  */
-export function makeSynthesisSchema(allowedArtifactIds: readonly string[]) {
+export function makeSynthesisSchema(
+  allowedArtifactIds: readonly string[],
+  consensusThreshold = 0,
+) {
   const sourceRef = makeSourceRefSchema(allowedArtifactIds);
-  const claim = z.object({
-    text: z.string().min(1),
-    confidence: z.number().min(0).max(1),
-    sources: z.array(sourceRef).min(1),
-  });
+  const claimWith = (minConfidence: number) =>
+    z.object({
+      text: z.string().min(1),
+      confidence: z.number().min(minConfidence).max(1),
+      sources: z.array(sourceRef).min(1),
+    });
 
   return z.object({
     summary: z.string().min(1).max(2000),
-    highConfidence: z.array(claim),
-    workingHypotheses: z.array(claim),
+    // The genome's consensus bar is expressed as the *floor on this field*,
+    // rather than checked after the fact. `z.toJSONSchema` turns it into a
+    // `minimum`, so it reaches the model as part of the contract and a claim
+    // below the bar cannot be generated here in the first place — the same
+    // move that stops fabricated citations. A less certain claim is not
+    // rejected, it simply belongs in `workingHypotheses`, which keeps the
+    // full range.
+    highConfidence: z.array(claimWith(consensusThreshold)),
+    workingHypotheses: z.array(claimWith(0)),
     contested: z.array(
       z.object({
         question: z.string().min(1),

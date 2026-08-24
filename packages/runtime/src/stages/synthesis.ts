@@ -140,6 +140,7 @@ export async function runSynthesis(
   }
 
   const threshold = ctx.genome.protocols.disagreementThreshold;
+  const consensusThreshold = ctx.genome.protocols.consensusThreshold;
 
   const step = await durableStep(
     { sql: ctx.sql, runId: ctx.run.id, iteration: ctx.iteration, clock: ctx.clock },
@@ -164,7 +165,7 @@ export async function runSynthesis(
 
       // Citations are constrained to these ids in the schema itself, so a
       // fabricated reference cannot be generated in the first place.
-      const scopedSchema = makeSynthesisSchema([...allowedArtifactIds]);
+      const scopedSchema = makeSynthesisSchema([...allowedArtifactIds], consensusThreshold);
 
       const channels = buildSynthesisChannels(inputs);
       const built = buildPrompt({
