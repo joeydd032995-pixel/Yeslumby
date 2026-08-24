@@ -10,7 +10,7 @@ lineage; most of the design here follows from taking it literally.
 ```bash
 scripts/dev-db.sh up          # real Postgres 16 + pgvector, in-repo
 pnpm install
-pnpm typecheck && pnpm test   # 353 tests against the real database
+pnpm typecheck && pnpm test   # 354 tests against the real database
 pnpm demo                     # the whole loop, end to end
 
 pnpm seed                     # a dev tenant with runs, versions, memory

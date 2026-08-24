@@ -148,6 +148,12 @@ export async function runSynthesis(
       stage: "SYNTHESIS",
       input: {
         agent,
+        // Part of the input because it is part of the *contract* the output has
+        // to satisfy: it sets the floor on `confidence` in the scoped schema
+        // below. The journal decides whether stored output is still valid by
+        // hashing this, so a synthesis recorded under a different bar — or under
+        // none, before this existed — must not replay as though it still holds.
+        consensusThreshold,
         proposals: inputs.proposals.map((p) => p.proposal),
         challenges: inputs.challenges.map((c) => c.challenge),
         falsifications: inputs.falsifications.map((f) => f.falsification),

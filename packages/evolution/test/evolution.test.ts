@@ -392,6 +392,17 @@ describe("genome recommendation", () => {
     expect(c.confidence).toBeLessThan(0.5);
   });
 
+  it("does not claim to have classified an objective it could not classify", async () => {
+    // The rationale sits directly beside the confidence in the UI. If it says
+    // "Classified as ..." while the confidence says nothing matched, the page
+    // tells the user two opposite things.
+    const rec = await recommendGenome({ sql, embedder }, { objective: "hello" });
+
+    expect(rec.confidence).toBe(UNCLASSIFIED_CONFIDENCE);
+    expect(rec.rationale).not.toMatch(/^Classified as/);
+    expect(rec.rationale).toMatch(/matched a known problem class/);
+  });
+
   it("reports the unclassified floor exactly, so a caller can recognise a guess", () => {
     // The landing page branches on this to present a default as a default
     // rather than as a recommendation. A caller cannot do that against a

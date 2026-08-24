@@ -130,9 +130,16 @@ export async function recommendGenome(
 
   let templateKey = classified.templateKey;
   let confidence = classified.confidence;
+  // At the floor nothing matched, so saying the objective was "classified as"
+  // anything contradicts the uncertainty the caller is being told about. The
+  // rationale is the sentence a user actually reads, so it has to agree with
+  // the confidence sitting next to it.
   let rationale =
-    `Classified as ${classified.problemClass} from the objective. ` +
-    `${describeTemplate(templateKey)}`;
+    classified.confidence <= UNCLASSIFIED_CONFIDENCE
+      ? `No keyword in the objective matched a known problem class, so this is the ` +
+        `general-purpose default rather than a classification. ${describeTemplate(templateKey)}`
+      : `Classified as ${classified.problemClass} from the objective. ` +
+        `${describeTemplate(templateKey)}`;
 
   // A lesson naming a template for this problem class is direct evidence from
   // a real run, and outranks the keyword guess.
