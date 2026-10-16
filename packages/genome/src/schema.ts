@@ -115,7 +115,24 @@ export const ProtocolsSchema = z.object({
   falsificationRequired: z.boolean().default(true),
   humanApproval: HumanApprovalSchema.default("mutations"),
   maxRounds: z.number().int().min(1).max(10).default(1),
-  /** Agreement at or above this is reportable as high-confidence. */
+  /**
+   * A claim is reportable as high-confidence only when the synthesizer's own
+   * stated `confidence` is at or above this.
+   *
+   * Enforced by construction rather than checked afterwards: the synthesis
+   * stage builds its per-call schema with this as the floor on `confidence` for
+   * `highConfidence` claims, so it travels into the JSON Schema and a claim
+   * below the bar cannot be generated. Only that list is gated —
+   * `workingHypotheses` keeps the full range, because a less certain claim
+   * needs somewhere legal to go rather than nowhere.
+   *
+   * This said "agreement" until it was found to be read by nothing at all.
+   * Nothing in a run measures agreement per claim: `agreementScore` is
+   * per-challenge, and objections join to *proposal* claims rather than to the
+   * synthesis claims written afterwards. Confidence is the only per-claim number
+   * that exists, so it is what this gates — narrower than the original wording,
+   * and stated rather than assumed.
+   */
   consensusThreshold: z.number().min(0).max(1).default(0.7),
   /**
    * Disagreement at or above this *must* survive into the synthesis output as

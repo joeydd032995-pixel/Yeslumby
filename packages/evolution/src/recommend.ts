@@ -69,6 +69,17 @@ const SIGNALS: ClassSignal[] = [
   },
 ];
 
+/**
+ * The confidence reported when the objective matched no keyword at all.
+ *
+ * At this value the returned `problemClass` and `templateKey` are the fallback
+ * signal rather than a classification — nothing about the objective selected
+ * them. Exported so a caller can say so to the user instead of presenting a
+ * guess and a match identically, which is what the landing page did while this
+ * number was a literal buried in here.
+ */
+export const UNCLASSIFIED_CONFIDENCE = 0.3;
+
 export function classifyObjective(objective: string): {
   problemClass: string;
   templateKey: string;
@@ -85,7 +96,8 @@ export function classifyObjective(objective: string): {
   // Confidence rises with evidence but never reaches certainty: this is a
   // keyword match, and presenting it as more would be dishonest to the user
   // deciding whether to accept the suggestion.
-  const confidence = best.hits === 0 ? 0.3 : Math.min(0.85, 0.4 + best.hits * 0.15);
+  const confidence =
+    best.hits === 0 ? UNCLASSIFIED_CONFIDENCE : Math.min(0.85, 0.4 + best.hits * 0.15);
 
   return {
     problemClass: best.signal.problemClass,
@@ -118,9 +130,16 @@ export async function recommendGenome(
 
   let templateKey = classified.templateKey;
   let confidence = classified.confidence;
+  // At the floor nothing matched, so saying the objective was "classified as"
+  // anything contradicts the uncertainty the caller is being told about. The
+  // rationale is the sentence a user actually reads, so it has to agree with
+  // the confidence sitting next to it.
   let rationale =
-    `Classified as ${classified.problemClass} from the objective. ` +
-    `${describeTemplate(templateKey)}`;
+    classified.confidence <= UNCLASSIFIED_CONFIDENCE
+      ? `No keyword in the objective matched a known problem class, so this is the ` +
+        `general-purpose default rather than a classification. ${describeTemplate(templateKey)}`
+      : `Classified as ${classified.problemClass} from the objective. ` +
+        `${describeTemplate(templateKey)}`;
 
   // A lesson naming a template for this problem class is direct evidence from
   // a real run, and outranks the keyword guess.
