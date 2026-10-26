@@ -95,12 +95,16 @@ export const StoredFalsificationSchema = z.object({
  * the default. A row stored before that field existed therefore costs a model
  * call under the scoped schema and nothing at all under this one.
  *
- * What that leaves unchecked on replay: a citation naming an artifact that no
- * longer exists in the run. `checkSourcesResolve` and `checkDisagreementPreserved`
- * in `stages/synthesis.ts` still run only inside the `durableStep` callback, so
- * a replayed synthesis is checked by neither. That gap is real and is not closed
- * here; closing it means hoisting both checks so they also run against a
- * replayed value.
+ * What this schema cannot carry, `runSynthesis` passes as `validateReplay`:
+ * `checkSourcesResolve` and `checkDisagreementPreserved` depend on the run
+ * around the value — which artifacts are in it, where the genome's
+ * disagreement bar sits — so they are checked there rather than here, on
+ * replayed values as well as fresh ones.
+ *
+ * Still not guaranteed, and worth knowing: `disagreementThreshold` is not part
+ * of the synthesis step's hashed input, so lowering it in a genome does not
+ * invalidate a stored synthesis the way moving `consensusThreshold` does. The
+ * violation is caught at replay rather than prevented by the hash.
  */
 export const StoredSynthesisSchema = z.object({
   synthesis: SynthesisSchema,

@@ -143,17 +143,37 @@ export async function runSynthesis(
   const threshold = ctx.genome.protocols.disagreementThreshold;
   const consensusThreshold = ctx.genome.protocols.consensusThreshold;
 
+  // Exactly the artifacts this stage was shown. Any citation outside this set
+  // is fabricated, whatever it looks like.
+  //
+  // Computed out here rather than in the callback because the replay path needs
+  // it too: these ids are not in the hashed input — only the artifacts'
+  // *contents* are — so a synthesis can replay against a round whose upstream
+  // steps re-executed under fresh ids and now cites artifacts the run does not
+  // contain.
+  const allowedArtifactIds = new Set<string>([
+    ...inputs.proposals.map((p) => p.artifactId),
+    ...inputs.challenges.map((c) => c.artifactId),
+    ...inputs.falsifications.map((f) => f.artifactId),
+  ]);
+
   const step = await durableStep(
     journalCtx(ctx),
     {
       stage: "SYNTHESIS",
-      // Shape only, via the static schema. What this does NOT re-check on
-      // replay is which artifacts exist in this run: `checkSourcesResolve` and
-      // `checkDisagreementPreserved` below run inside the callback, so a
-      // replayed synthesis is checked by neither. Closing that needs both
-      // hoisted out of here, which is a change to what a resumed run accepts
-      // and is deliberately not bundled with this one.
+      // The static schema carries the shape. It cannot carry the two things
+      // that make a synthesis acceptable *here* — that its citations resolve
+      // and that it did not erase measured disagreement — because both depend
+      // on the run rather than the value, so they go through `validateReplay`.
       output: StoredSynthesisSchema,
+      // The same two checks the callback runs on fresh output, against a
+      // replayed one. They were previously unreachable on replay, which left
+      // the mechanism this file's header calls its enforcement switched off on
+      // exactly the path nobody watches. A refusal recomputes the step, so the
+      // model still gets to answer — it just does not get to skip the question.
+      validateReplay: (stored) =>
+        checkSourcesResolve(stored.synthesis, allowedArtifactIds) ??
+        checkDisagreementPreserved(stored.synthesis, inputs.disagreementLevel, threshold),
       input: {
         agent,
         // Part of the input because it is part of the *contract* the output has
@@ -169,14 +189,6 @@ export async function runSynthesis(
       },
     },
     async () => {
-      // Exactly the artifacts this stage was shown. Any citation outside this
-      // set is fabricated, whatever it looks like.
-      const allowedArtifactIds = new Set<string>([
-        ...inputs.proposals.map((p) => p.artifactId),
-        ...inputs.challenges.map((c) => c.artifactId),
-        ...inputs.falsifications.map((f) => f.artifactId),
-      ]);
-
       // Citations are constrained to these ids in the schema itself, so a
       // fabricated reference cannot be generated in the first place.
       const scopedSchema = makeSynthesisSchema([...allowedArtifactIds], consensusThreshold);
