@@ -17,7 +17,30 @@ export {
   type JournalContext,
   type StepSpec,
   type StepResult,
+  type ReplayRejection,
 } from "./journal.js";
+
+/**
+ * The journal's own contracts, as distinct from the model contracts below.
+ * `durableStep` requires one of these, so they are public for the same reason
+ * it is.
+ */
+export {
+  StoredUsageSchema,
+  StoredContextSchema,
+  StoredProposalSchema,
+  StoredChallengeSchema,
+  StoredFalsificationSchema,
+  StoredSynthesisSchema,
+  StoredWatcherSchema,
+  type StoredUsage,
+  type StoredContext,
+  type StoredProposal,
+  type StoredChallenge,
+  type StoredFalsification,
+  type StoredSynthesis,
+  type StoredWatcher,
+} from "./stored.js";
 
 export {
   SourceRefSchema,

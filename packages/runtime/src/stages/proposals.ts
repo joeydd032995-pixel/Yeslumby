@@ -2,9 +2,10 @@ import { zeroUsage } from "@meta/shared";
 import type { AgentSpec } from "@meta/genome";
 import { durableStep } from "../journal.js";
 import { ProposalSchema, type Proposal, type StageContext } from "../schemas.js";
+import { StoredProposalSchema } from "../stored.js";
 import type { Channel } from "../prompt.js";
 import type { RecalledKnowledge, RunContext, StageCost } from "../context.js";
-import { addCost, callAgent } from "./shared.js";
+import { addCost, callAgent, journalCtx } from "./shared.js";
 
 /**
  * Independent proposal fan-out.
@@ -136,10 +137,11 @@ async function proposeOne(ctx: RunContext, agent: AgentSpec, inputs: ProposalInp
   ctx.emit({ type: "agent.start", stage: "PROPOSALS", agentId: agent.id });
 
   const step = await durableStep(
-    { sql: ctx.sql, runId: ctx.run.id, iteration: ctx.iteration, clock: ctx.clock },
+    journalCtx(ctx),
     {
       stage: "PROPOSALS",
       unitId: agent.id,
+      output: StoredProposalSchema,
       // The input hash covers the agent's own definition and the shared
       // framing. Change either and this step recomputes; change a peer and it
       // does not, because a peer cannot affect an independent proposal.

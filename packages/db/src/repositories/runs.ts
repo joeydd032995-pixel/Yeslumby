@@ -208,6 +208,57 @@ export async function claimStep(sql: Sql, input: ClaimStepInput): Promise<ClaimR
     : { kind: "in_progress", step: current };
 }
 
+/**
+ * Retire a completed result the caller cannot read, and claim the step in the
+ * same statement.
+ *
+ * This is the `input_hash` mismatch arrived at from the other direction. There,
+ * the inputs moved and the recorded output stopped describing the step; here the
+ * inputs are unchanged but the *contract* moved, and the recorded output stopped
+ * being readable. Both say the same thing — this result must be recomputed — so
+ * both land in the same state: RUNNING, one more attempt, output discarded.
+ *
+ * Claiming here is not a convenience. The caller was replaying, so it holds no
+ * lease, and `completeStep` is owner-guarded; without taking ownership in this
+ * statement the recomputed result would be refused on write, and the caller
+ * would fall into the lost-lease branch and adopt the very output it refused.
+ *
+ * The guard re-checks exactly the state the caller decided on — still COMPLETED,
+ * still this hash — so a worker that already took the row over cannot be
+ * displaced, and two workers refusing the same row cannot both recompute it.
+ * Returns the claimed row, or undefined when the row moved underneath.
+ */
+export async function invalidateStep(
+  sql: Sql,
+  input: {
+    runId: string;
+    stepKey: string;
+    inputHash: string;
+    ownerToken: string;
+    /** Why the stored output was refused. Visible while the step recomputes. */
+    reason: unknown;
+    leaseSeconds?: number;
+  },
+): Promise<RunStepRow | undefined> {
+  const lease = input.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
+  const [row] = await sql<RunStepRow[]>`
+    UPDATE run_steps
+    SET status = 'RUNNING',
+        attempt = attempt + 1,
+        output = NULL,
+        error = ${sql.json(input.reason as never)},
+        owner_token = ${input.ownerToken},
+        lease_expires_at = now() + make_interval(secs => ${lease}),
+        updated_at = now()
+    WHERE run_id = ${input.runId}
+      AND step_key = ${input.stepKey}
+      AND status = 'COMPLETED'
+      AND input_hash = ${input.inputHash}
+    RETURNING *
+  `;
+  return row;
+}
+
 /** Re-read a step, for a waiter polling an owner it is deferring to. */
 export async function getStep(
   sql: Sql,

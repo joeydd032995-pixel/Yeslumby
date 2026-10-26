@@ -44,14 +44,12 @@ describe("ContestedClaimSchema.severity", () => {
     expect(parsed.severity).toBe("substantive");
   });
 
-  it("does not protect the journal replay path, which never parses", () => {
-    // Worth pinning down, because the default looks like it makes replay safe
-    // and does not: durableStep returns `claim.step.output as T`. A synthesis
-    // recorded before this field existed replays with severity absent, whatever
-    // the type says — so a reader of this field must tolerate undefined.
-    const replayed = structuredClone(contested) as { severity?: string };
-    expect(replayed.severity).toBeUndefined();
-  });
+  // The case this schema used to carry — "does not protect the journal replay
+  // path, which never parses" — is gone, and deliberately not adapted. It
+  // asserted a key was missing from a `structuredClone`d literal, so it never
+  // exercised `durableStep` at all and would have kept passing while
+  // documenting a falsehood. The behaviour it was about is now pinned against
+  // a real journal row in `journal-replay.test.ts`.
 
   it("keeps an explicit severity", () => {
     expect(ContestedClaimSchema.parse({ ...contested, severity: "fatal" }).severity).toBe("fatal");

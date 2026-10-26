@@ -141,15 +141,16 @@ export const ContestedClaimSchema = z.object({
    * reasons set out there. It is here so the information exists in artifacts and
    * in the synthesis contract at all.
    *
-   * Defaulted rather than required so a caller parsing an older synthesis by
-   * hand gets the neutral middle instead of a throw. **This does not make
-   * journal replay safe**, which an earlier version of this comment claimed:
-   * `durableStep` returns stored step output through a type assertion and never
-   * parses it, so a synthesis recorded before this field existed replays with
-   * `severity` genuinely absent, whatever the type says. Anything that comes to
-   * read this field must tolerate `undefined` on replayed rounds, or the replay
-   * path must start parsing — which would be a change to the journal, not to
-   * this schema.
+   * Defaulted rather than required so a synthesis recorded before this field
+   * existed reads as the neutral middle instead of throwing.
+   *
+   * That default now does its job on journal replay too, which for two earlier
+   * revisions of this comment it did not: `durableStep` returned stored output
+   * through a type assertion, so a replayed synthesis carried `severity`
+   * genuinely absent — and `scoreDisagreement` turned that into `NaN`. The
+   * journal parses stored output and returns the *parsed* value, so the default
+   * fires on the way out. The live contract from `makeSynthesisSchema` still
+   * requires the field explicitly, so a fresh call cannot fall through to it.
    */
   severity: ClaimSeveritySchema.default("substantive"),
 });

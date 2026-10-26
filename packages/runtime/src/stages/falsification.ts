@@ -1,8 +1,9 @@
 import { zeroUsage } from "@meta/shared";
 import { durableStep } from "../journal.js";
 import { FalsificationSchema, type Falsification } from "../schemas.js";
+import { StoredFalsificationSchema } from "../stored.js";
 import type { RunContext, StageCost } from "../context.js";
-import { addCost, callAgent, summarizeProposal } from "./shared.js";
+import { addCost, callAgent, journalCtx, summarizeProposal } from "./shared.js";
 import type { ProposalOutcome } from "./proposals.js";
 import type { ChallengeOutcome } from "./challenges.js";
 
@@ -89,10 +90,11 @@ export async function runFalsification(
       ctx.emit({ type: "agent.start", stage: "FALSIFICATION", agentId: agent.id });
 
       const step = await durableStep(
-        { sql: ctx.sql, runId: ctx.run.id, iteration: ctx.iteration, clock: ctx.clock },
+        journalCtx(ctx),
         {
           stage: "FALSIFICATION",
           unitId: target.agentId,
+          output: StoredFalsificationSchema,
           input: {
             agent,
             target: target.proposal,
