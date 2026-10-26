@@ -29,8 +29,9 @@ export interface JournalContext {
   iteration: number;
   clock?: Clock;
   /**
-   * Identifies this worker for step leases. Defaults to a per-process token;
-   * supply one explicitly when several workers share a process.
+   * Identifies this worker for step leases. Defaults to a token unique to this
+   * call, which is what keeps two overlapping calls from both executing the
+   * step; supply one explicitly only to stand in for a specific worker.
    */
   ownerToken?: string;
   /** How long a claim is held before another worker may take it over. */
@@ -49,8 +50,26 @@ export interface JournalContext {
   onReplayRejected?: (rejection: ReplayRejection) => void;
 }
 
-/** One token per process, so a crashed process's leases are visibly foreign. */
+/** Identifies this process, so a crashed process's leases are visibly foreign. */
 const PROCESS_TOKEN = `w_${randomUUID()}`;
+
+/**
+ * A lease owner is one *call*, not one process.
+ *
+ * `claimStep` lets a caller take over a RUNNING row whose owner token matches
+ * its own — "our own re-entry". With one token per process that is not
+ * re-entry at all when two calls overlap: the second caller is a different
+ * execution, and letting it take the first's live claim means both run the
+ * step and both pay for it, which is the one thing the lease exists to stop.
+ * Two requests on one run reach this easily, since the stream route refuses
+ * only a COMPLETED or FAILED run.
+ *
+ * Nothing legitimate is lost. A row left RUNNING by a thrown error is marked
+ * FAILED on the way out, and a row left RUNNING by a killed process is foreign
+ * to the process that restarts — neither needs same-token takeover. What is
+ * left is exactly the overlap case, where the second caller should wait.
+ */
+const callToken = () => `${PROCESS_TOKEN}:${randomUUID()}`;
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -125,7 +144,7 @@ export async function durableStep<S extends z.ZodType>(
 ): Promise<StepResult<z.output<S>>> {
   const clock = ctx.clock ?? systemClock;
   const sleep = ctx.sleep ?? defaultSleep;
-  const ownerToken = ctx.ownerToken ?? PROCESS_TOKEN;
+  const ownerToken = ctx.ownerToken ?? callToken();
   const unitId = spec.unitId ?? "stage";
   const key = stepKey(ctx.runId, ctx.iteration, spec.stage, unitId);
   const inputHash = contentHash(spec.input);

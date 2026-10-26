@@ -395,3 +395,64 @@ describe("a real round", () => {
     });
   });
 });
+
+describe("concurrent callers in one process", () => {
+  it("does not let a second caller steal a live claim", async () => {
+    const h = await makeHarness(sql);
+    const input = { probe: "same-process-race" };
+    const key = await journalRow(h.runId, "SYNTHESIS", input, storedSynthesis());
+    await sql`
+      UPDATE run_steps SET output = output #- '{synthesis,summary}'
+      WHERE run_id = ${h.runId} AND step_key = ${key}
+    `;
+
+    // Two resumes of one run in one process — two tabs on the stream route,
+    // which only refuses a COMPLETED or FAILED run. Both see the unreadable
+    // row, both refuse it, one wins `invalidateStep`. The loser must wait for
+    // the winner, not execute alongside it: the journal's whole promise is
+    // that a model call happens once.
+    let ran = 0;
+    const call = () =>
+      durableStep(
+        // No explicit ownerToken — exactly how every stage calls it.
+        { sql, runId: h.runId, iteration: 0 },
+        { stage: "SYNTHESIS", input, output: StoredSynthesisSchema },
+        async () => {
+          ran += 1;
+          await new Promise((r) => setTimeout(r, 50));
+          return storedSynthesis();
+        },
+      );
+
+    const [a, b] = await Promise.all([call(), call()]);
+
+    expect(ran).toBe(1);
+    expect(a.value.synthesis.summary).toBe(b.value.synthesis.summary);
+    const row = await runs.getStep(sql, h.runId, key);
+    expect(row?.attempt).toBe(2);
+  });
+
+  it("does not let two callers both execute a fresh step", async () => {
+    const h = await makeHarness(sql);
+    const input = { probe: "fresh-race" };
+
+    // The same hazard without any refusal involved, so it is clear this is the
+    // lease's own guarantee and not something the replay path introduced:
+    // `journal.test.ts` pins "exactly one worker" using distinct tokens, which
+    // never exercised two calls inside one process.
+    let ran = 0;
+    const call = () =>
+      durableStep(
+        { sql, runId: h.runId, iteration: 0 },
+        { stage: "SYNTHESIS", input, output: StoredSynthesisSchema },
+        async () => {
+          ran += 1;
+          await new Promise((r) => setTimeout(r, 50));
+          return storedSynthesis();
+        },
+      );
+
+    await Promise.all([call(), call()]);
+    expect(ran).toBe(1);
+  });
+});
