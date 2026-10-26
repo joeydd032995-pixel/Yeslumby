@@ -66,6 +66,19 @@ export class StageOutputError extends MetaError {
   readonly retryable = true;
 }
 
+/**
+ * A journaled result could not be read under the current schema, and
+ * recomputing it was not an option.
+ *
+ * Not retryable, which is the distinction from {@link StageOutputError}: that
+ * one is retryable because a model can be asked again. Nothing can be asked
+ * again here — the same operation re-reads the same row and fails identically.
+ */
+export class JournalReplayError extends MetaError {
+  readonly code = "JOURNAL_REPLAY_INVALID";
+  readonly retryable = false;
+}
+
 /** A stage tried to exceed a capability granted by the genome. */
 export class CapabilityError extends MetaError {
   readonly code = "CAPABILITY_DENIED";

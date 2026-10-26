@@ -37,6 +37,19 @@ export type RunEvent =
       latencyMs: number;
       replayed: boolean;
     }
+  /**
+   * A journaled result was refused under the current contract and is being
+   * recomputed. Not a failure — the run continues — but it is spend that a
+   * replay was supposed to avoid, so it is worth seeing rather than inferring
+   * from a step's attempt count after the fact.
+   */
+  | {
+      type: "step.invalidated";
+      stage: string;
+      unitId: string;
+      iteration: number;
+      reason: string;
+    }
   | { type: "run.paused"; stage: string; approvalId: string }
   | { type: "run.finished"; status: string };
 

@@ -1,8 +1,9 @@
 import { durableStep } from "../journal.js";
 import { ContextSchema, type StageContext } from "../schemas.js";
+import { StoredContextSchema } from "../stored.js";
 import type { Channel } from "../prompt.js";
 import type { RecalledKnowledge, RunContext, StageCost } from "../context.js";
-import { callAgent } from "./shared.js";
+import { callAgent, journalCtx } from "./shared.js";
 
 /**
  * The context stage establishes shared framing before anyone proposes.
@@ -127,9 +128,10 @@ export async function runContextStage(
   }
 
   const step = await durableStep(
-    { sql: ctx.sql, runId: ctx.run.id, iteration: ctx.iteration, clock: ctx.clock },
+    journalCtx(ctx),
     {
       stage: "CONTEXT",
+      output: StoredContextSchema,
       input: {
         objective: ctx.run.objective,
         agent,

@@ -31,6 +31,7 @@ export {
   MutationPolicyError,
   ModelCallError,
   StageOutputError,
+  JournalReplayError,
   CapabilityError,
   StopCriterionError,
   RunPaused,

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm typecheck)",
+      "Bash(pg_isready *)",
+      "mcp__github__pull_request_read"
+    ]
+  }
+}

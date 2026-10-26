@@ -2,9 +2,10 @@ import { StageOutputError } from "@meta/shared";
 import { runs } from "@meta/db";
 import { durableStep } from "../journal.js";
 import { makeSynthesisSchema, jsonSchemaFor, type Synthesis } from "../schemas.js";
+import { StoredSynthesisSchema } from "../stored.js";
 import { buildPrompt, type Channel } from "../prompt.js";
 import type { RunContext, StageCost } from "../context.js";
-import { summarizeProposal } from "./shared.js";
+import { journalCtx, summarizeProposal } from "./shared.js";
 import type { ProposalOutcome } from "./proposals.js";
 import type { ChallengeOutcome } from "./challenges.js";
 import type { FalsificationOutcome } from "./falsification.js";
@@ -143,9 +144,16 @@ export async function runSynthesis(
   const consensusThreshold = ctx.genome.protocols.consensusThreshold;
 
   const step = await durableStep(
-    { sql: ctx.sql, runId: ctx.run.id, iteration: ctx.iteration, clock: ctx.clock },
+    journalCtx(ctx),
     {
       stage: "SYNTHESIS",
+      // Shape only, via the static schema. What this does NOT re-check on
+      // replay is which artifacts exist in this run: `checkSourcesResolve` and
+      // `checkDisagreementPreserved` below run inside the callback, so a
+      // replayed synthesis is checked by neither. Closing that needs both
+      // hoisted out of here, which is a change to what a resumed run accepts
+      // and is deliberately not bundled with this one.
+      output: StoredSynthesisSchema,
       input: {
         agent,
         // Part of the input because it is part of the *contract* the output has

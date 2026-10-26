@@ -1,8 +1,9 @@
 import { PRIVILEGE_BEARING_MUTATIONS } from "@meta/genome";
 import { durableStep } from "../journal.js";
 import { WatcherEvaluationSchema, type WatcherEvaluation } from "../schemas.js";
+import { StoredWatcherSchema } from "../stored.js";
 import type { RunContext, StageCost } from "../context.js";
-import { callAgent } from "./shared.js";
+import { callAgent, journalCtx } from "./shared.js";
 import type { ProposalOutcome } from "./proposals.js";
 import type { ChallengeOutcome } from "./challenges.js";
 import type { FalsificationOutcome } from "./falsification.js";
@@ -98,9 +99,10 @@ export async function runWatcher(
   };
 
   const step = await durableStep(
-    { sql: ctx.sql, runId: ctx.run.id, iteration: ctx.iteration, clock: ctx.clock },
+    journalCtx(ctx),
     {
       stage: "WATCHER",
+      output: StoredWatcherSchema,
       input: {
         model: ctx.genome.watcher.model,
         dimensions: ctx.genome.watcher.dimensions,

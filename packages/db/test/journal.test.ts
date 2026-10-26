@@ -222,6 +222,86 @@ describe("step journal", () => {
     expect(step?.output).toBeNull();
   });
 
+  it("invalidates a completed row and hands back the claim", async () => {
+    const { run } = await seedRun("j6");
+    const key = `${run.id}:0:SYNTHESIS:stage`;
+    const inputHash = contentHash({ synthesis: "inputs" });
+
+    await claim({
+      runId: run.id,
+      stepKey: key,
+      iteration: 0,
+      stage: "SYNTHESIS",
+      unitId: "stage",
+      inputHash,
+    });
+    await runs.completeStep(sql, run.id, key, { shape: "from an older build" }, 50);
+
+    const taken = await runs.invalidateStep(sql, {
+      runId: run.id,
+      stepKey: key,
+      inputHash,
+      ownerToken: "worker-2",
+      reason: { code: "JOURNAL_REPLAY_INVALID" },
+    });
+
+    // The same state a stale input hash produces — one more attempt, output
+    // discarded — reached because the contract moved rather than the inputs.
+    expect(taken?.status).toBe("RUNNING");
+    expect(taken?.attempt).toBe(2);
+    expect(taken?.output).toBeNull();
+    expect(taken?.error).toMatchObject({ code: "JOURNAL_REPLAY_INVALID" });
+
+    // Claiming in the same statement is the point: the refusing caller was
+    // replaying and held no lease, so without it the recomputed result would be
+    // refused on write and the caller would adopt the output it just refused.
+    expect(taken?.owner_token).toBe("worker-2");
+    expect(await runs.completeStep(sql, run.id, key, { shape: "current" }, 10, "worker-2")).toBe(
+      true,
+    );
+  });
+
+  it("refuses to invalidate when the row has moved underneath", async () => {
+    const { run } = await seedRun("j7");
+    const key = `${run.id}:0:SYNTHESIS:stage`;
+    const inputHash = contentHash({ synthesis: "inputs" });
+
+    await claim({
+      runId: run.id,
+      stepKey: key,
+      iteration: 0,
+      stage: "SYNTHESIS",
+      unitId: "stage",
+      inputHash,
+    });
+
+    // Still RUNNING: someone else already took it over. Two workers refusing
+    // the same row must not both recompute it.
+    expect(
+      await runs.invalidateStep(sql, {
+        runId: run.id,
+        stepKey: key,
+        inputHash,
+        ownerToken: "worker-2",
+        reason: {},
+      }),
+    ).toBeUndefined();
+
+    await runs.completeStep(sql, run.id, key, { ok: true }, 10);
+
+    // Completed, but under inputs we did not read. Whoever moved the hash owns
+    // the decision to re-run it.
+    expect(
+      await runs.invalidateStep(sql, {
+        runId: run.id,
+        stepKey: key,
+        inputHash: contentHash({ synthesis: "different" }),
+        ownerToken: "worker-2",
+        reason: {},
+      }),
+    ).toBeUndefined();
+  });
+
   it("keeps steps of different iterations independent", async () => {
     const { run } = await seedRun("j5");
     const inputHash = contentHash({ same: "inputs" });

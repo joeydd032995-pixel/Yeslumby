@@ -5,6 +5,7 @@ import type { AgentSpec } from "@meta/genome";
 import type { ArtifactKind } from "@meta/db";
 import { buildPrompt, type Channel } from "../prompt.js";
 import { jsonSchemaFor } from "../schemas.js";
+import type { JournalContext } from "../journal.js";
 import type { RunContext } from "../context.js";
 
 /**
@@ -132,6 +133,32 @@ export async function callAgent<S extends z.ZodType>(
 
   // Unreachable: the loop either returns or throws on attempt 2.
   throw new StageOutputError(`${input.stage} exhausted attempts`, { stage: input.stage });
+}
+
+/**
+ * The journal context for a stage.
+ *
+ * One constructor rather than the same four fields repeated at every call site,
+ * because it carries the seam that makes a refused replay visible on the run
+ * stream — and a seam repeated six times is a seam a seventh stage forgets.
+ * Translating a journal fact into a run event belongs here, in the layer that
+ * owns `RunEvent`, not in the journal.
+ */
+export function journalCtx(ctx: RunContext): JournalContext {
+  return {
+    sql: ctx.sql,
+    runId: ctx.run.id,
+    iteration: ctx.iteration,
+    clock: ctx.clock,
+    onReplayRejected: (rejection) =>
+      ctx.emit({
+        type: "step.invalidated",
+        stage: rejection.stage,
+        unitId: rejection.unitId,
+        iteration: ctx.iteration,
+        reason: rejection.reason,
+      }),
+  };
 }
 
 /** Render a claim list as fenced peer material. */

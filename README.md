@@ -10,7 +10,7 @@ lineage; most of the design here follows from taking it literally.
 ```bash
 scripts/dev-db.sh up          # real Postgres 16 + pgvector, in-repo
 pnpm install
-pnpm typecheck && pnpm test   # 354 tests against the real database
+pnpm typecheck && pnpm test   # 366 tests against the real database
 pnpm demo                     # the whole loop, end to end
 
 pnpm seed                     # a dev tenant with runs, versions, memory
@@ -119,7 +119,10 @@ content so a payload cannot close its own fence.
 `executeRound` is re-entered and completed steps replay from the journal. A crash
 and a human-approval pause are the same mechanism. Steps carry an owner token and
 a lease, so two workers cannot both execute one step and a dead worker cannot
-strand a run.
+strand a run. Stored output is read back against the schema that describes it
+rather than cast into shape — a run parked awaiting approval can resume against
+a build whose contracts have moved, so a row a current schema can repair replays
+for free, and one it cannot read is recomputed rather than flowing on.
 
 ## Architecture
 
