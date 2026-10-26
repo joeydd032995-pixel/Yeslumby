@@ -357,7 +357,7 @@ describe("the refusal is bounded", () => {
 });
 
 describe("a real round", () => {
-  it("recomputes only the stage whose stored output it cannot read", async () => {
+  it("recomputes the step whose stored output it cannot read", async () => {
     const h = await makeHarness(sql);
     await executeRound(h.ctx);
     const afterFirst = h.simulator.callCount;
@@ -374,25 +374,81 @@ describe("a real round", () => {
     const resumed = h.reenter();
     await executeRound(resumed);
 
-    // Downstream stages hash proposal *content*, which the recompute restores
-    // identically under the deterministic simulator — so only the one unit
-    // re-ran, and the stages that depend on it still replayed.
     const after = await runs.listSteps(sql, h.runId);
-    expect(after.find((s) => s.step_key === victim!.step_key)?.attempt).toBe(2);
-    for (const step of after.filter((s) => s.step_key !== victim!.step_key)) {
-      expect(step.attempt, `${step.stage}/${step.unit_id} was re-executed`).toBe(1);
-    }
-    expect(h.simulator.callCount - afterFirst).toBe(1);
+    const invalidated = h.events.filter(
+      (e): e is Extract<typeof e, { type: "step.invalidated" }> => e.type === "step.invalidated",
+    );
 
-    // Spend that a replay was supposed to avoid should be visible on the run's
-    // event stream, not inferred from an attempt count after the fact.
-    const invalidated = h.events.filter((e) => e.type === "step.invalidated");
-    expect(invalidated).toHaveLength(1);
-    expect(invalidated[0]).toMatchObject({
-      type: "step.invalidated",
-      stage: "PROPOSALS",
+    // The degraded proposal recomputes, and its refusal is a shape refusal.
+    expect(after.find((s) => s.step_key === victim!.step_key)?.attempt).toBe(2);
+    expect(invalidated.find((e) => e.stage === "PROPOSALS")).toMatchObject({
       unitId: victim!.unit_id,
+      kind: "shape",
     });
+
+    // Exactly one refusal of that kind: the one this test caused. Other steps
+    // may still recompute, and legitimately without an event — a recomputed
+    // proposal gets a fresh artifact id, a synthesis citing the old one is
+    // refused (the case forced deterministically below), and the watcher then
+    // re-runs because it hashes the synthesis, which is the pre-existing
+    // stale-input-hash path and emits nothing. Which of those fire depends on
+    // what this seed's synthesis cited, so this test asserts only its own
+    // refusal; the invariant wiring is pinned in the next one.
+    expect(invalidated.filter((e) => e.kind === "shape")).toHaveLength(1);
+    expect(h.simulator.callCount).toBeGreaterThan(afterFirst);
+  });
+
+  it("recomputes a replayed synthesis whose citations no longer resolve", async () => {
+    const h = await makeHarness(sql);
+    await executeRound(h.ctx);
+    const afterFirst = h.simulator.callCount;
+
+    const steps = await runs.listSteps(sql, h.runId);
+    const synthesis = steps.find((s) => s.stage === "SYNTHESIS");
+    expect(synthesis).toBeDefined();
+
+    // Force a citation to an artifact this run does not contain, leaving
+    // `input_hash` untouched so the step still replays. This stands in for the
+    // production case rather than reproducing it: there, an upstream step
+    // re-executes and `randomIds` gives it an id the stored synthesis cannot
+    // know. Forcing the citation makes the test independent of which artifacts
+    // this seed's synthesis happened to cite.
+    await sql`
+      UPDATE run_steps
+      SET output = jsonb_set(output, '{synthesis,highConfidence}', ${sql.json([
+        {
+          text: "a claim resting on an artifact that is gone",
+          confidence: 0.9,
+          sources: [{ kind: "proposal", artifactId: "art_not_in_this_run" }],
+        },
+      ] as never)})
+      WHERE run_id = ${h.runId} AND step_key = ${synthesis!.step_key}
+    `;
+
+    await executeRound(h.reenter());
+
+    const after = await runs.listSteps(sql, h.runId);
+    expect(after.find((s) => s.step_key === synthesis!.step_key)?.attempt).toBe(2);
+    expect(h.simulator.callCount).toBeGreaterThan(afterFirst);
+
+    const invalidated = h.events.filter(
+      (e): e is Extract<typeof e, { type: "step.invalidated" }> => e.type === "step.invalidated",
+    );
+    expect(invalidated).toHaveLength(1);
+    expect(invalidated[0]).toMatchObject({ stage: "SYNTHESIS", kind: "invariant" });
+    // Named as a citation problem, not a shape one — the distinction the `kind`
+    // field exists to carry.
+    expect(invalidated[0]?.reason).toContain("art_not_in_this_run");
+
+    // And the recomputed synthesis is clean: its citations resolve.
+    const row = await runs.getStep(sql, h.runId, synthesis!.step_key);
+    const stored = StoredSynthesisSchema.parse(row?.output);
+    const allowed = new Set(
+      (await runs.listArtifacts(sql, h.runId)).map((a) => a.id),
+    );
+    for (const claim of stored.synthesis.highConfidence) {
+      for (const source of claim.sources) expect(allowed.has(source.artifactId)).toBe(true);
+    }
   });
 });
 
@@ -454,5 +510,107 @@ describe("concurrent callers in one process", () => {
 
     await Promise.all([call(), call()]);
     expect(ran).toBe(1);
+  });
+});
+
+describe("run-relative invariants, not just shape", () => {
+  /** A stored value that parses but will be refused by validateReplay. */
+  const refuseAlways = () => "the stored value no longer holds against this run";
+
+  it("recomputes a value that parses but no longer holds", async () => {
+    const h = await makeHarness(sql);
+    const input = { probe: "invariant-refused" };
+    const key = await journalRow(h.runId, "SYNTHESIS", input, storedSynthesis());
+
+    const rejections: Array<{ kind: string; reason: string }> = [];
+    let ran = 0;
+    const step = await durableStep(
+      journalCtxFor(h.runId, (r) => void rejections.push({ kind: r.kind, reason: r.reason })),
+      {
+        stage: "SYNTHESIS",
+        input,
+        output: StoredSynthesisSchema,
+        // Refuses the stored row; the recomputed one is never shown to it,
+        // because the hook does not run on fresh output.
+        validateReplay: () => (ran === 0 ? refuseAlways() : undefined),
+      },
+      async () => {
+        ran += 1;
+        return storedSynthesis();
+      },
+    );
+
+    expect(ran).toBe(1);
+    expect(step.replayed).toBe(false);
+    expect(step.revalidation?.kind).toBe("invariant");
+    // An invariant rejection has no Zod issues to report — the distinction an
+    // operator needs is which kind it was, so that is what the event carries.
+    expect(step.revalidation?.issues).toEqual([]);
+    expect(rejections).toEqual([{ kind: "invariant", reason: refuseAlways() }]);
+
+    const row = await runs.getStep(sql, h.runId, key);
+    expect(row?.attempt).toBe(2);
+    expect(row?.status).toBe("COMPLETED");
+  });
+
+  it("does not run against freshly executed output", async () => {
+    const h = await makeHarness(sql);
+    const input = { probe: "invariant-fresh" };
+
+    // The point of replay-only, and the reason this test exists: the stage that
+    // produces a value checks these invariants itself and can re-prompt the
+    // model when they fail. Running the hook here too would convert that
+    // recoverable failure into a dead step, so a hook that refuses everything
+    // must still let a fresh value through.
+    let ran = 0;
+    const step = await durableStep(
+      journalCtxFor(h.runId),
+      {
+        stage: "SYNTHESIS",
+        input,
+        output: StoredSynthesisSchema,
+        validateReplay: refuseAlways,
+      },
+      async () => {
+        ran += 1;
+        return storedSynthesis();
+      },
+    );
+
+    expect(ran).toBe(1);
+    expect(step.replayed).toBe(false);
+    expect(step.revalidation).toBeUndefined();
+    expect(step.value.synthesis.summary).toContain("replicates");
+  });
+
+  it("stays bounded when the stored value can never satisfy the invariant", async () => {
+    const h = await makeHarness(sql);
+    const input = { probe: "invariant-unsatisfiable" };
+    await journalRow(h.runId, "SYNTHESIS", input, storedSynthesis());
+
+    // Refused on replay, recomputed, and the recomputed value is stored — then
+    // a *second* resume refuses it again. Each call spends one execution at
+    // most, which is what keeps a permanently-violated invariant from becoming
+    // a recompute loop that bills on every pass.
+    let ran = 0;
+    const call = () =>
+      durableStep(
+        journalCtxFor(h.runId),
+        {
+          stage: "SYNTHESIS",
+          input,
+          output: StoredSynthesisSchema,
+          validateReplay: refuseAlways,
+        },
+        async () => {
+          ran += 1;
+          return storedSynthesis();
+        },
+      );
+
+    await call();
+    expect(ran).toBe(1);
+    await call();
+    expect(ran).toBe(2);
   });
 });
