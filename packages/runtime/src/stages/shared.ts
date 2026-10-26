@@ -156,6 +156,7 @@ export function journalCtx(ctx: RunContext): JournalContext {
         stage: rejection.stage,
         unitId: rejection.unitId,
         iteration: ctx.iteration,
+        kind: rejection.kind,
         reason: rejection.reason,
       }),
   };

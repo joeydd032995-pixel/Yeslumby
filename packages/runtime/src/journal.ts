@@ -92,6 +92,17 @@ export interface StepSpec<S extends z.ZodType = z.ZodType> {
    * would re-open the hole the moment someone was in a hurry.
    */
   output: S;
+  /**
+   * Invariants a schema cannot express, because they depend on facts outside
+   * the stored value — which artifacts exist in *this* run, where this genome's
+   * thresholds sit *now*. Returns a reason, or undefined when the value holds.
+   *
+   * Run on replay only, and that is load-bearing rather than an optimisation.
+   * A stage checking the same invariant on its own fresh output can re-prompt
+   * the model and recover; this cannot, it can only refuse. Running it on both
+   * paths would turn a correctable failure into a hard one.
+   */
+  validateReplay?: (value: z.output<S>) => string | undefined;
 }
 
 export interface StepResult<T> {
@@ -115,8 +126,16 @@ export interface ReplayRejection {
   stage: string;
   unitId: string;
   stepKey: string;
+  /**
+   * `shape` — the stored value does not satisfy the schema; the row was written
+   * by code whose contract has since moved. `invariant` — it parses, but no
+   * longer holds against this run. Different causes with different fixes, so an
+   * operator should not have to guess which one they are looking at.
+   */
+  kind: "shape" | "invariant";
   /** A short human-readable summary, suitable for an event or a log line. */
   reason: string;
+  /** Empty for an invariant rejection, which has no Zod issues to report. */
   issues: Array<{ path: string; message: string; code: string }>;
 }
 
@@ -161,15 +180,30 @@ export async function durableStep<S extends z.ZodType>(
     ...(ctx.leaseSeconds !== undefined ? { leaseSeconds: ctx.leaseSeconds } : {}),
   };
 
-  const reject = (error: z.ZodError): ReplayRejection => {
+  const rejection = (
+    kind: ReplayRejection["kind"],
+    reason: string,
+    issues: ReplayRejection["issues"] = [],
+  ): ReplayRejection => ({ stage: spec.stage, unitId, stepKey: key, kind, reason, issues });
+
+  const shapeRejection = (error: z.ZodError): ReplayRejection => {
     const issues = describe(error);
-    return {
-      stage: spec.stage,
-      unitId,
-      stepKey: key,
-      reason: issues.map((i) => `${i.path}: ${i.message}`).join("; "),
-      issues,
-    };
+    return rejection("shape", issues.map((i) => `${i.path}: ${i.message}`).join("; "), issues);
+  };
+
+  /**
+   * Everything that must hold for a stored value to be handed back: it parses,
+   * and it still holds against this run. One helper so both replay paths — the
+   * normal one and the lost-lease adoption — ask the same question.
+   */
+  const checkStored = (
+    raw: unknown,
+  ): { ok: true; value: z.output<S> } | { ok: false; rejection: ReplayRejection } => {
+    const parsed = spec.output.safeParse(raw);
+    if (!parsed.success) return { ok: false, rejection: shapeRejection(parsed.error) };
+    const reason = spec.validateReplay?.(parsed.data);
+    if (reason) return { ok: false, rejection: rejection("invariant", reason) };
+    return { ok: true, value: parsed.data };
   };
 
   const deadline = Date.now() + maxWaitMs;
@@ -200,10 +234,10 @@ export async function durableStep<S extends z.ZodType>(
 
     if (claim.kind !== "replay") break;
 
-    const parsed = spec.output.safeParse(claim.step.output);
-    if (parsed.success) {
+    const checked = checkStored(claim.step.output);
+    if (checked.ok) {
       return {
-        value: parsed.data,
+        value: checked.value,
         replayed: true,
         latencyMs: claim.step.latency_ms ?? 0,
         ...(refused ? { revalidation: refused } : {}),
@@ -217,15 +251,17 @@ export async function durableStep<S extends z.ZodType>(
       // one refusal and never returns here. Refusing again would be an
       // unbounded recompute loop spending real money on every pass, so the
       // bound is one refusal per call and this is where it bites.
-      throw new JournalReplayError(`step ${key} was replaced by a result that is also unreadable`, {
+      throw new JournalReplayError(`step ${key} was replaced by a result we also refuse`, {
         stage: spec.stage,
         unitId,
         phase: "post-refusal",
-        issues: describe(parsed.error),
+        kind: checked.rejection.kind,
+        reason: checked.rejection.reason,
+        issues: checked.rejection.issues,
       });
     }
 
-    refused = reject(parsed.error);
+    refused = checked.rejection;
     ctx.onReplayRejected?.(refused);
 
     const taken = await runs.invalidateStep(ctx.sql, {
@@ -252,16 +288,21 @@ export async function durableStep<S extends z.ZodType>(
     // true at write time rather than hoped for at read time. A stage that has
     // drifted from its schema fails on the first run that exercises it instead
     // of on someone's resume weeks later.
-    const checked = spec.output.safeParse(produced);
-    if (!checked.success) {
+    //
+    // Schema only — deliberately not `checkStored`. `validateReplay` exists for
+    // invariants the producing stage already checks itself, and that stage can
+    // re-prompt the model where this can only refuse. Running it here would
+    // turn a recoverable failure into a dead step.
+    const parsedFresh = spec.output.safeParse(produced);
+    if (!parsedFresh.success) {
       throw new JournalReplayError(`step ${key} produced output violating its stored contract`, {
         stage: spec.stage,
         unitId,
         phase: "pre-store",
-        issues: describe(checked.error),
+        issues: describe(parsedFresh.error),
       });
     }
-    const value = checked.data;
+    const value = parsedFresh.data;
 
     const stored = await runs.completeStep(ctx.sql, ctx.runId, key, value, latencyMs, ownerToken);
     if (!stored) {
@@ -269,27 +310,30 @@ export async function durableStep<S extends z.ZodType>(
       // record; ours is discarded rather than overwriting it.
       const current = await runs.getStep(ctx.sql, ctx.runId, key);
       if (current?.status === "COMPLETED") {
-        const adopted = spec.output.safeParse(current.output);
-        if (adopted.success) {
+        // Adopting a stored value, so it faces the same question as a replay.
+        const adopted = checkStored(current.output);
+        if (adopted.ok) {
           return {
-            value: adopted.data,
+            value: adopted.value,
             replayed: true,
             latencyMs: current.latency_ms ?? latencyMs,
             ...(refused ? { revalidation: refused } : {}),
           };
         }
-        // The one place the policy is deliberately not "recompute", and the
-        // reason is cost, not shape: the other worker has already paid for this
-        // step. Returning our own value instead would be cheap but would leave
-        // this worker's view of the run diverged from the journal every other
-        // worker reads.
+        // The one place the policy is deliberately not "recompute", for either
+        // kind of refusal, and the reason is cost rather than shape: the other
+        // worker has already paid for this step. Returning our own value
+        // instead would be cheap but would leave this worker's view of the run
+        // diverged from the journal every other worker reads.
         throw new JournalReplayError(
           `step ${key} completed by another worker cannot be read under the current contract`,
           {
             stage: spec.stage,
             unitId,
             phase: "lost-lease",
-            issues: describe(adopted.error),
+            kind: adopted.rejection.kind,
+            reason: adopted.rejection.reason,
+            issues: adopted.rejection.issues,
           },
         );
       }

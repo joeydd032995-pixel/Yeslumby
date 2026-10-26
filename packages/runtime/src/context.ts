@@ -48,6 +48,12 @@ export type RunEvent =
       stage: string;
       unitId: string;
       iteration: number;
+      /**
+       * `shape` — the stored value no longer satisfies its schema. `invariant`
+       * — it parses but no longer holds against this run, such as a synthesis
+       * citing artifacts that are no longer in it.
+       */
+      kind: "shape" | "invariant";
       reason: string;
     }
   | { type: "run.paused"; stage: string; approvalId: string }
